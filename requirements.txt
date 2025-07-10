@@ -1,0 +1,7 @@
+Flask
+yfinance
+Flask-Cors
+firebase-admin
+PyJWT
+requests
+gunicorn
