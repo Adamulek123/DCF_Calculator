@@ -143,27 +143,37 @@ def get_trailing_metrics(current_user):
 
         regular_market_price = info.get('regularMarketPrice')
         long_name = info.get('longName', ticker_symbol)
-        market_cap = info.get('marketCap')
+        market_cap = info.get('marketCap') # Get marketCap directly
 
         free_cash_flow = None
-        cashflow_stmt = ticker.cashflow
-        if not cashflow_stmt.empty and 'Free Cash Flow' in cashflow_stmt.index:
-            free_cash_flow = cashflow_stmt.loc['Free Cash Flow'].iloc[0]
+        # Attempt to get freeCashflow directly from ticker.info first
+        free_cash_flow = info.get('freeCashflow')
 
+        # If not found in info, try to get it from the cashflow statement
+        if free_cash_flow is None:
+            cashflow_stmt = ticker.cashflow
+            if not cashflow_stmt.empty and 'Free Cash Flow' in cashflow_stmt.index:
+                # Get the most recent Free Cash Flow (iloc[0] is usually the latest)
+                free_cash_flow = cashflow_stmt.loc['Free Cash Flow'].iloc[0]
+
+        # Calculate FCF Yield using Free Cash Flow and Market Capitalization
+        fcf_yield = None
+        if free_cash_flow is not None and market_cap and market_cap > 0:
+            fcf_yield = free_cash_flow / market_cap
+        
+        # Calculate FCF per share for display/other calculations
         shares_outstanding = info.get('sharesOutstanding')
         fcf_share = None
         if free_cash_flow is not None and shares_outstanding and shares_outstanding > 0:
             fcf_share = free_cash_flow / shares_outstanding
 
-        fcf_yield = None
-        if fcf_share is not None and regular_market_price and regular_market_price > 0:
-            fcf_yield = fcf_share / regular_market_price
-
-        sbc_impact = info.get('stockCompensation')
+        # sbc_impact is often not directly available as a percentage in yfinance info.
+        # Keeping the existing logic for it as a placeholder or default.
+        sbc_impact = info.get('stockCompensation') # This might be None
         if sbc_impact is None and 'totalRevenue' in info and info.get('totalRevenue', 0) > 0:
-            sbc_impact = 0.02
+            sbc_impact = 0.02 # Default placeholder if not found
         elif sbc_impact is None:
-            sbc_impact = 0.0
+            sbc_impact = 0.0 # Default to 0 if no revenue or stockCompensation info
 
         def to_float_or_none(val):
             try:
