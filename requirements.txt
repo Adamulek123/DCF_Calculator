@@ -5,3 +5,4 @@ firebase-admin
 PyJWT
 requests
 gunicorn
+flask_limiter

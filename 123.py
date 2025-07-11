@@ -7,30 +7,32 @@ import firebase_admin
 from firebase_admin import credentials, auth, firestore
 import jwt
 import datetime
-import requests # Import the requests library for HTTPError
-from functools import wraps # Ensure wraps is imported
-import time # Import the time module for sleep
-import json # Import the json module
-import base64 # Import base64 for decoding secrets
+import requests
+from functools import wraps
+import time
+import json
+import base64
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
-
-# Allow all origins for simplicity, but you can restrict this in production
 CORS(app)
 
-# --- This is the new code for handling the Firebase key ---
-# Get the base64 encoded key from the environment variable
-encoded_key = os.environ.get('FIREBASE_SERVICE_ACCOUNT_KEY_BASE64')
+# --- Rate Limiting Setup ---
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://",
+)
 
-db = None # Initialize db as None
+# --- Firebase Initialization ---
+encoded_key = os.environ.get('FIREBASE_SERVICE_ACCOUNT_KEY_BASE64')
+db = None
 if encoded_key:
     try:
-        # Decode the base64 string
         decoded_key_str = base64.b64decode(encoded_key).decode('utf-8')
-        # Parse the string into a dictionary
         service_account_info = json.loads(decoded_key_str)
-        
-        # Initialize Firebase with the credentials dictionary
         cred = credentials.Certificate(service_account_info)
         firebase_admin.initialize_app(cred)
         db = firestore.client()
@@ -39,11 +41,7 @@ if encoded_key:
         print(f"Error initializing Firebase Admin SDK from secret: {e}")
 else:
     print("FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable not found.")
-# --- End of new code ---
 
-
-# Secret key for JWT (use a strong, random key in production)
-# It's better to set this as an environment variable as well
 SECRET_KEY = os.environ.get('SECRET_KEY', 'your_super_secret_jwt_key_replace_me_for_local_dev')
 
 # --- Authentication Decorator ---
@@ -60,7 +58,6 @@ def token_required(f):
         try:
             data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
             current_user = data['username']
-            # Pass current_user to the decorated function
             return f(current_user, *args, **kwargs)
         except jwt.ExpiredSignatureError:
             return jsonify({'message': 'Token has expired!'}), 401
@@ -70,8 +67,9 @@ def token_required(f):
             return jsonify({'message': f'Token processing error: {str(e)}'}), 401
     return decorated
 
-# --- User Management ---
+# --- User Management Endpoints ---
 @app.route('/register', methods=['POST'])
+@limiter.limit("5 per hour")
 def register():
     if not db:
         return jsonify({'message': 'Database not configured, cannot register user.'}), 500
@@ -89,11 +87,12 @@ def register():
 
     users_ref.document(username).set({
         'username': username,
-        'password': password # In a real app, you should hash this password!
+        'password': password
     })
     return jsonify({'message': 'User registered successfully'}), 201
 
 @app.route('/login', methods=['POST'])
+@limiter.limit("10 per hour")
 def login():
     if not db:
         return jsonify({'message': 'Database not configured, cannot log in.'}), 500
@@ -117,8 +116,8 @@ def login():
     return jsonify({'token': token}), 200
 
 # --- DCF Calculator Endpoints ---
-
 @app.route('/get_trailing_metrics', methods=['GET'])
+@limiter.limit("60 per minute")
 @token_required
 def get_trailing_metrics(current_user):
     ticker_symbol = request.args.get('ticker')
@@ -127,8 +126,7 @@ def get_trailing_metrics(current_user):
         return jsonify({'error': 'Ticker symbol is required'}), 400
 
     try:
-        # Add a small delay to help with rate limiting, even on a new platform
-        time.sleep(0.5) 
+        time.sleep(0.5)
         ticker = yf.Ticker(ticker_symbol)
         info = ticker.info
 
@@ -138,42 +136,29 @@ def get_trailing_metrics(current_user):
         trailing_eps = info.get('trailingEps')
         trailing_pe = info.get('trailingPE')
         earnings_growth = info.get('earningsGrowth')
-        
         trailing_eps_growth = earnings_growth if isinstance(earnings_growth, (int, float)) else 0.0
-
         regular_market_price = info.get('regularMarketPrice')
         long_name = info.get('longName', ticker_symbol)
-        market_cap = info.get('marketCap') # Get marketCap directly
-
-        free_cash_flow = None
-        # Attempt to get freeCashflow directly from ticker.info first
+        market_cap = info.get('marketCap')
         free_cash_flow = info.get('freeCashflow')
 
-        # If not found in info, try to get it from the cashflow statement
         if free_cash_flow is None:
             cashflow_stmt = ticker.cashflow
             if not cashflow_stmt.empty and 'Free Cash Flow' in cashflow_stmt.index:
-                # Get the most recent Free Cash Flow (iloc[0] is usually the latest)
                 free_cash_flow = cashflow_stmt.loc['Free Cash Flow'].iloc[0]
 
-        # Calculate FCF Yield using Free Cash Flow and Market Capitalization
         fcf_yield = None
         if free_cash_flow is not None and market_cap and market_cap > 0:
             fcf_yield = free_cash_flow / market_cap
         
-        # Calculate FCF per share for display/other calculations
         shares_outstanding = info.get('sharesOutstanding')
         fcf_share = None
         if free_cash_flow is not None and shares_outstanding and shares_outstanding > 0:
             fcf_share = free_cash_flow / shares_outstanding
 
-        # sbc_impact is often not directly available as a percentage in yfinance info.
-        # Keeping the existing logic for it as a placeholder or default.
-        sbc_impact = info.get('stockCompensation') # This might be None
-        if sbc_impact is None and 'totalRevenue' in info and info.get('totalRevenue', 0) > 0:
-            sbc_impact = 0.02 # Default placeholder if not found
-        elif sbc_impact is None:
-            sbc_impact = 0.0 # Default to 0 if no revenue or stockCompensation info
+        sbc_impact = info.get('stockCompensation')
+        if sbc_impact is None:
+            sbc_impact = 0.0
 
         def to_float_or_none(val):
             try:
@@ -202,9 +187,7 @@ def get_trailing_metrics(current_user):
     except json.decoder.JSONDecodeError:
         return jsonify({'error': 'Failed to parse data from Yahoo Finance. This often indicates rate limiting or an issue with the ticker symbol. Please try again later.'}), 500
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
         return jsonify({'error': f'An unexpected error occurred while fetching or calculating data for {ticker_symbol}. Please try again later. Details: {str(e)}'}), 500
-
 
 @app.route('/save_calculation', methods=['POST'])
 @token_required
@@ -230,7 +213,6 @@ def save_calculation(current_user):
         })
         return jsonify({'message': f'Calculation "{name}" for {ticker} saved successfully!'}), 200
     except Exception as e:
-        print(f"Error saving calculation for {current_user}: {e}")
         return jsonify({'message': f'Error saving calculation: {str(e)}'}), 500
 
 @app.route('/load_calculations', methods=['GET'])
@@ -250,7 +232,6 @@ def load_calculations(current_user):
         
         return jsonify(calculations), 200
     except Exception as e:
-        print(f"Error loading calculations for {current_user}: {e}")
         return jsonify({'message': f'Error loading calculations: {str(e)}'}), 500
 
 @app.route('/delete_calculation/<string:calc_id>', methods=['DELETE'])
@@ -266,7 +247,6 @@ def delete_calculation(current_user, calc_id):
         doc_ref.delete()
         return jsonify({'message': f'Calculation "{calc_id}" deleted successfully!'}), 200
     except Exception as e:
-        print(f"Error deleting calculation {calc_id} for {current_user}: {e}")
         return jsonify({'message': f'Error deleting calculation: {str(e)}'}), 500
 
 if __name__ == "__main__":
