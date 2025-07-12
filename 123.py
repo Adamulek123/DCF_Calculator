@@ -200,8 +200,8 @@ def get_insights_data(current_user):
     try:
         ticker = yf.Ticker(ticker_symbol)
         
-        # 1. Price Data (last year, daily)
-        hist = ticker.history(period="1y")
+        # 1. Price Data (All time)
+        hist = ticker.history(period="max")
         price_data = {
             'labels': hist.index.strftime('%Y-%m-%d').tolist(),
             'data': hist['Close'].round(2).tolist(),
@@ -211,32 +211,36 @@ def get_insights_data(current_user):
         }
 
         # 2. Financials (Annual)
-        financials = ticker.financials.T.sort_index(ascending=False)
-        income_stmt = ticker.income_stmt.T.sort_index(ascending=False)
-        
-        source_df = financials if 'Total Revenue' in financials.columns else income_stmt
-        source_df = source_df.head(5).sort_index()
+        income_stmt = ticker.income_stmt.T.sort_index()
+        cashflow_stmt = ticker.cashflow.T.sort_index()
         
         revenue_data = {
-            'labels': source_df.index.strftime('%Y').tolist(),
-            'data': source_df['Total Revenue'].tolist() if 'Total Revenue' in source_df.columns else [],
+            'labels': income_stmt.index.strftime('%Y').tolist(),
+            'data': income_stmt['Total Revenue'].tolist() if 'Total Revenue' in income_stmt.columns else [],
             'type': 'bar',
             'backgroundColor': 'rgba(40, 167, 69, 0.7)',
             'borderColor': 'rgba(40, 167, 69, 1)'
         }
         
-        income_stmt_sorted = income_stmt.head(5).sort_index()
+        free_cash_flow_data = {
+            'labels': cashflow_stmt.index.strftime('%Y').tolist(),
+            'data': cashflow_stmt['Free Cash Flow'].tolist() if 'Free Cash Flow' in cashflow_stmt.columns else [],
+            'type': 'bar',
+            'backgroundColor': 'rgba(102, 16, 242, 0.7)',
+            'borderColor': 'rgba(102, 16, 242, 1)'
+        }
+
         ebitda_data = {
-            'labels': income_stmt_sorted.index.strftime('%Y').tolist(),
-            'data': income_stmt_sorted['EBITDA'].tolist() if 'EBITDA' in income_stmt_sorted.columns else [],
+            'labels': income_stmt.index.strftime('%Y').tolist(),
+            'data': income_stmt['EBITDA'].tolist() if 'EBITDA' in income_stmt.columns else [],
             'type': 'bar',
             'backgroundColor': 'rgba(255, 193, 7, 0.7)',
             'borderColor': 'rgba(255, 193, 7, 1)'
         }
         
         net_income_data = {
-            'labels': income_stmt_sorted.index.strftime('%Y').tolist(),
-            'data': income_stmt_sorted['Net Income'].tolist() if 'Net Income' in income_stmt_sorted.columns else [],
+            'labels': income_stmt.index.strftime('%Y').tolist(),
+            'data': income_stmt['Net Income'].tolist() if 'Net Income' in income_stmt.columns else [],
             'type': 'bar',
             'backgroundColor': 'rgba(23, 162, 184, 0.7)',
             'borderColor': 'rgba(23, 162, 184, 1)'
@@ -244,8 +248,8 @@ def get_insights_data(current_user):
 
         # 3. EPS Data (Annual)
         eps_data = {
-            'labels': income_stmt_sorted.index.strftime('%Y').tolist(),
-            'data': income_stmt_sorted['Basic EPS'].tolist() if 'Basic EPS' in income_stmt_sorted.columns else [],
+            'labels': income_stmt.index.strftime('%Y').tolist(),
+            'data': income_stmt['Basic EPS'].tolist() if 'Basic EPS' in income_stmt.columns else [],
             'type': 'line',
             'backgroundColor': 'rgba(253, 126, 20, 0.1)',
             'borderColor': 'rgba(253, 126, 20, 1)'
@@ -253,7 +257,6 @@ def get_insights_data(current_user):
 
         # 4. Dividends (Annual Sum)
         dividends = ticker.dividends.resample('A').sum()
-        dividends = dividends.tail(5)
         dividends_data = {
             'labels': dividends.index.strftime('%Y').tolist(),
             'data': dividends.round(2).tolist(),
@@ -263,15 +266,16 @@ def get_insights_data(current_user):
         }
 
         insights_data = {
-            'Price (1Y)': price_data,
+            'Price (All Time)': price_data,
             'Annual Revenue': revenue_data,
-            'Annual EBITDA': ebitda_data,
-            'Annual Net Income': net_income_data,
+            'Annual Free Cash Flow': free_cash_flow_data,
             'Annual EPS': eps_data,
+            'Annual Net Income': net_income_data,
+            'Annual EBITDA': ebitda_data,
             'Annual Dividends': dividends_data,
         }
         
-        insights_data_filtered = {k: v for k, v in insights_data.items() if v['data']}
+        insights_data_filtered = {k: v for k, v in insights_data.items() if v.get('data')}
 
         if not insights_data_filtered:
             return jsonify({'error': f'Could not find sufficient insights data for {ticker_symbol}.'}), 404
