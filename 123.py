@@ -193,14 +193,15 @@ def clean_data(data_list):
     """Converts NaN to None for JSON compatibility."""
     return [item if pd.notna(item) else None for item in data_list]
 
-def process_financial_data(income_stmt, cashflow_stmt, dividends):
+def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
     """Helper function to process financial statements into chart data."""
     data = {}
+    date_format = '%Y' if period_type == 'annual' else '%Y-%m-%d'
     
     # Revenue
     if 'Total Revenue' in income_stmt.columns:
         data['Revenue'] = {
-            'labels': income_stmt.index.strftime('%Y-%m-%d').tolist(),
+            'labels': income_stmt.index.strftime(date_format).tolist(),
             'data': clean_data(income_stmt['Total Revenue'].tolist()),
             'type': 'bar', 'backgroundColor': 'rgba(40, 167, 69, 0.7)', 'borderColor': 'rgba(40, 167, 69, 1)'
         }
@@ -208,7 +209,7 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends):
     # Free Cash Flow
     if 'Free Cash Flow' in cashflow_stmt.columns:
         data['Free Cash Flow'] = {
-            'labels': cashflow_stmt.index.strftime('%Y-%m-%d').tolist(),
+            'labels': cashflow_stmt.index.strftime(date_format).tolist(),
             'data': clean_data(cashflow_stmt['Free Cash Flow'].tolist()),
             'type': 'bar', 'backgroundColor': 'rgba(102, 16, 242, 0.7)', 'borderColor': 'rgba(102, 16, 242, 1)'
         }
@@ -216,7 +217,7 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends):
     # EPS
     if 'Basic EPS' in income_stmt.columns:
         data['EPS'] = {
-            'labels': income_stmt.index.strftime('%Y-%m-%d').tolist(),
+            'labels': income_stmt.index.strftime(date_format).tolist(),
             'data': clean_data(income_stmt['Basic EPS'].tolist()),
             'type': 'line', 'backgroundColor': 'rgba(253, 126, 20, 0.1)', 'borderColor': 'rgba(253, 126, 20, 1)'
         }
@@ -224,7 +225,7 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends):
     # Net Income
     if 'Net Income' in income_stmt.columns:
         data['Net Income'] = {
-            'labels': income_stmt.index.strftime('%Y-%m-%d').tolist(),
+            'labels': income_stmt.index.strftime(date_format).tolist(),
             'data': clean_data(income_stmt['Net Income'].tolist()),
             'type': 'bar', 'backgroundColor': 'rgba(23, 162, 184, 0.7)', 'borderColor': 'rgba(23, 162, 184, 1)'
         }
@@ -232,7 +233,7 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends):
     # EBITDA
     if 'EBITDA' in income_stmt.columns:
         data['EBITDA'] = {
-            'labels': income_stmt.index.strftime('%Y-%m-%d').tolist(),
+            'labels': income_stmt.index.strftime(date_format).tolist(),
             'data': clean_data(income_stmt['EBITDA'].tolist()),
             'type': 'bar', 'backgroundColor': 'rgba(255, 193, 7, 0.7)', 'borderColor': 'rgba(255, 193, 7, 1)'
         }
@@ -240,7 +241,7 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends):
     # Dividends
     if not dividends.empty:
         data['Dividends'] = {
-            'labels': dividends.index.strftime('%Y-%m-%d').tolist(),
+            'labels': dividends.index.strftime(date_format).tolist(),
             'data': clean_data(dividends.round(2).tolist()),
             'type': 'bar', 'backgroundColor': 'rgba(108, 117, 125, 0.7)', 'borderColor': 'rgba(108, 117, 125, 1)'
         }
@@ -260,9 +261,12 @@ def get_insights_data(current_user):
         
         # Price Data (All time)
         hist = ticker.history(period="max")
+        # Ensure price data labels are formatted for annual when appropriate, or daily for 'max'
+        price_labels = hist.index.strftime('%Y-%m-%d').tolist() # Keep full date for price data as it can be daily
+        
         price_data = {
             'Price (All Time)': {
-                'labels': hist.index.strftime('%Y-%m-%d').tolist(),
+                'labels': price_labels,
                 'data': clean_data(hist['Close'].round(2).tolist()),
                 'type': 'line', 'backgroundColor': 'rgba(0, 123, 255, 0.1)', 'borderColor': 'rgba(0, 123, 255, 1)'
             }
@@ -272,13 +276,13 @@ def get_insights_data(current_user):
         annual_income = ticker.financials.T.sort_index()
         annual_cashflow = ticker.cashflow.T.sort_index()
         annual_dividends = ticker.dividends.resample('YE').sum()
-        annual_data = process_financial_data(annual_income, annual_cashflow, annual_dividends)
+        annual_data = process_financial_data(annual_income, annual_cashflow, annual_dividends, 'annual')
 
         # Quarterly Data
         quarterly_income = ticker.quarterly_financials.T.sort_index()
         quarterly_cashflow = ticker.quarterly_cashflow.T.sort_index()
         quarterly_dividends = ticker.dividends.resample('QE').sum()
-        quarterly_data = process_financial_data(quarterly_income, quarterly_cashflow, quarterly_dividends)
+        quarterly_data = process_financial_data(quarterly_income, quarterly_cashflow, quarterly_dividends, 'quarterly')
         
         final_data = {
             'price': price_data,
