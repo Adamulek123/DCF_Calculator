@@ -189,6 +189,10 @@ def get_trailing_metrics(current_user):
     except Exception as e:
         return jsonify({'error': f'An unexpected error occurred while fetching or calculating data for {ticker_symbol}. Please try again later. Details: {str(e)}'}), 500
 
+def clean_data(data_list):
+    """Converts NaN to None for JSON compatibility."""
+    return [item if pd.notna(item) else None for item in data_list]
+
 @app.route('/get_insights_data', methods=['GET'])
 @limiter.limit("30 per minute")
 @token_required
@@ -204,7 +208,7 @@ def get_insights_data(current_user):
         hist = ticker.history(period="max")
         price_data = {
             'labels': hist.index.strftime('%Y-%m-%d').tolist(),
-            'data': hist['Close'].round(2).tolist(),
+            'data': clean_data(hist['Close'].round(2).tolist()),
             'type': 'line',
             'backgroundColor': 'rgba(0, 123, 255, 0.1)',
             'borderColor': 'rgba(0, 123, 255, 1)'
@@ -216,7 +220,7 @@ def get_insights_data(current_user):
         
         revenue_data = {
             'labels': income_stmt.index.strftime('%Y').tolist(),
-            'data': income_stmt['Total Revenue'].tolist() if 'Total Revenue' in income_stmt.columns else [],
+            'data': clean_data(income_stmt['Total Revenue'].tolist()) if 'Total Revenue' in income_stmt.columns else [],
             'type': 'bar',
             'backgroundColor': 'rgba(40, 167, 69, 0.7)',
             'borderColor': 'rgba(40, 167, 69, 1)'
@@ -224,7 +228,7 @@ def get_insights_data(current_user):
         
         free_cash_flow_data = {
             'labels': cashflow_stmt.index.strftime('%Y').tolist(),
-            'data': cashflow_stmt['Free Cash Flow'].tolist() if 'Free Cash Flow' in cashflow_stmt.columns else [],
+            'data': clean_data(cashflow_stmt['Free Cash Flow'].tolist()) if 'Free Cash Flow' in cashflow_stmt.columns else [],
             'type': 'bar',
             'backgroundColor': 'rgba(102, 16, 242, 0.7)',
             'borderColor': 'rgba(102, 16, 242, 1)'
@@ -232,7 +236,7 @@ def get_insights_data(current_user):
 
         ebitda_data = {
             'labels': income_stmt.index.strftime('%Y').tolist(),
-            'data': income_stmt['EBITDA'].tolist() if 'EBITDA' in income_stmt.columns else [],
+            'data': clean_data(income_stmt['EBITDA'].tolist()) if 'EBITDA' in income_stmt.columns else [],
             'type': 'bar',
             'backgroundColor': 'rgba(255, 193, 7, 0.7)',
             'borderColor': 'rgba(255, 193, 7, 1)'
@@ -240,7 +244,7 @@ def get_insights_data(current_user):
         
         net_income_data = {
             'labels': income_stmt.index.strftime('%Y').tolist(),
-            'data': income_stmt['Net Income'].tolist() if 'Net Income' in income_stmt.columns else [],
+            'data': clean_data(income_stmt['Net Income'].tolist()) if 'Net Income' in income_stmt.columns else [],
             'type': 'bar',
             'backgroundColor': 'rgba(23, 162, 184, 0.7)',
             'borderColor': 'rgba(23, 162, 184, 1)'
@@ -249,17 +253,17 @@ def get_insights_data(current_user):
         # 3. EPS Data (Annual)
         eps_data = {
             'labels': income_stmt.index.strftime('%Y').tolist(),
-            'data': income_stmt['Basic EPS'].tolist() if 'Basic EPS' in income_stmt.columns else [],
+            'data': clean_data(income_stmt['Basic EPS'].tolist()) if 'Basic EPS' in income_stmt.columns else [],
             'type': 'line',
             'backgroundColor': 'rgba(253, 126, 20, 0.1)',
             'borderColor': 'rgba(253, 126, 20, 1)'
         }
 
         # 4. Dividends (Annual Sum)
-        dividends = ticker.dividends.resample('A').sum()
+        dividends = ticker.dividends.resample('YE').sum()
         dividends_data = {
             'labels': dividends.index.strftime('%Y').tolist(),
-            'data': dividends.round(2).tolist(),
+            'data': clean_data(dividends.round(2).tolist()),
             'type': 'bar',
             'backgroundColor': 'rgba(108, 117, 125, 0.7)',
             'borderColor': 'rgba(108, 117, 125, 1)'
