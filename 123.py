@@ -189,6 +189,99 @@ def get_trailing_metrics(current_user):
     except Exception as e:
         return jsonify({'error': f'An unexpected error occurred while fetching or calculating data for {ticker_symbol}. Please try again later. Details: {str(e)}'}), 500
 
+@app.route('/get_insights_data', methods=['GET'])
+@limiter.limit("30 per minute")
+@token_required
+def get_insights_data(current_user):
+    ticker_symbol = request.args.get('ticker')
+    if not ticker_symbol:
+        return jsonify({'error': 'Ticker symbol is required'}), 400
+
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        
+        # 1. Price Data (last year, daily)
+        hist = ticker.history(period="1y")
+        price_data = {
+            'labels': hist.index.strftime('%Y-%m-%d').tolist(),
+            'data': hist['Close'].round(2).tolist(),
+            'type': 'line',
+            'backgroundColor': 'rgba(0, 123, 255, 0.1)',
+            'borderColor': 'rgba(0, 123, 255, 1)'
+        }
+
+        # 2. Financials (Annual)
+        financials = ticker.financials.T.sort_index(ascending=False)
+        income_stmt = ticker.income_stmt.T.sort_index(ascending=False)
+        
+        source_df = financials if 'Total Revenue' in financials.columns else income_stmt
+        source_df = source_df.head(5).sort_index()
+        
+        revenue_data = {
+            'labels': source_df.index.strftime('%Y').tolist(),
+            'data': source_df['Total Revenue'].tolist() if 'Total Revenue' in source_df.columns else [],
+            'type': 'bar',
+            'backgroundColor': 'rgba(40, 167, 69, 0.7)',
+            'borderColor': 'rgba(40, 167, 69, 1)'
+        }
+        
+        income_stmt_sorted = income_stmt.head(5).sort_index()
+        ebitda_data = {
+            'labels': income_stmt_sorted.index.strftime('%Y').tolist(),
+            'data': income_stmt_sorted['EBITDA'].tolist() if 'EBITDA' in income_stmt_sorted.columns else [],
+            'type': 'bar',
+            'backgroundColor': 'rgba(255, 193, 7, 0.7)',
+            'borderColor': 'rgba(255, 193, 7, 1)'
+        }
+        
+        net_income_data = {
+            'labels': income_stmt_sorted.index.strftime('%Y').tolist(),
+            'data': income_stmt_sorted['Net Income'].tolist() if 'Net Income' in income_stmt_sorted.columns else [],
+            'type': 'bar',
+            'backgroundColor': 'rgba(23, 162, 184, 0.7)',
+            'borderColor': 'rgba(23, 162, 184, 1)'
+        }
+
+        # 3. EPS Data (Annual)
+        eps_data = {
+            'labels': income_stmt_sorted.index.strftime('%Y').tolist(),
+            'data': income_stmt_sorted['Basic EPS'].tolist() if 'Basic EPS' in income_stmt_sorted.columns else [],
+            'type': 'line',
+            'backgroundColor': 'rgba(253, 126, 20, 0.1)',
+            'borderColor': 'rgba(253, 126, 20, 1)'
+        }
+
+        # 4. Dividends (Annual Sum)
+        dividends = ticker.dividends.resample('A').sum()
+        dividends = dividends.tail(5)
+        dividends_data = {
+            'labels': dividends.index.strftime('%Y').tolist(),
+            'data': dividends.round(2).tolist(),
+            'type': 'bar',
+            'backgroundColor': 'rgba(108, 117, 125, 0.7)',
+            'borderColor': 'rgba(108, 117, 125, 1)'
+        }
+
+        insights_data = {
+            'Price (1Y)': price_data,
+            'Annual Revenue': revenue_data,
+            'Annual EBITDA': ebitda_data,
+            'Annual Net Income': net_income_data,
+            'Annual EPS': eps_data,
+            'Annual Dividends': dividends_data,
+        }
+        
+        insights_data_filtered = {k: v for k, v in insights_data.items() if v['data']}
+
+        if not insights_data_filtered:
+            return jsonify({'error': f'Could not find sufficient insights data for {ticker_symbol}.'}), 404
+
+        return jsonify(insights_data_filtered), 200
+
+    except Exception as e:
+        return jsonify({'error': f'An unexpected error occurred while fetching insights data for {ticker_symbol}. Details: {str(e)}'}), 500
+
+
 @app.route('/save_calculation', methods=['POST'])
 @token_required
 def save_calculation(current_user):
