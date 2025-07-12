@@ -193,6 +193,60 @@ def clean_data(data_list):
     """Converts NaN to None for JSON compatibility."""
     return [item if pd.notna(item) else None for item in data_list]
 
+def process_financial_data(income_stmt, cashflow_stmt, dividends):
+    """Helper function to process financial statements into chart data."""
+    data = {}
+    
+    # Revenue
+    if 'Total Revenue' in income_stmt.columns:
+        data['Revenue'] = {
+            'labels': income_stmt.index.strftime('%Y-%m-%d').tolist(),
+            'data': clean_data(income_stmt['Total Revenue'].tolist()),
+            'type': 'bar', 'backgroundColor': 'rgba(40, 167, 69, 0.7)', 'borderColor': 'rgba(40, 167, 69, 1)'
+        }
+    
+    # Free Cash Flow
+    if 'Free Cash Flow' in cashflow_stmt.columns:
+        data['Free Cash Flow'] = {
+            'labels': cashflow_stmt.index.strftime('%Y-%m-%d').tolist(),
+            'data': clean_data(cashflow_stmt['Free Cash Flow'].tolist()),
+            'type': 'bar', 'backgroundColor': 'rgba(102, 16, 242, 0.7)', 'borderColor': 'rgba(102, 16, 242, 1)'
+        }
+
+    # EPS
+    if 'Basic EPS' in income_stmt.columns:
+        data['EPS'] = {
+            'labels': income_stmt.index.strftime('%Y-%m-%d').tolist(),
+            'data': clean_data(income_stmt['Basic EPS'].tolist()),
+            'type': 'line', 'backgroundColor': 'rgba(253, 126, 20, 0.1)', 'borderColor': 'rgba(253, 126, 20, 1)'
+        }
+
+    # Net Income
+    if 'Net Income' in income_stmt.columns:
+        data['Net Income'] = {
+            'labels': income_stmt.index.strftime('%Y-%m-%d').tolist(),
+            'data': clean_data(income_stmt['Net Income'].tolist()),
+            'type': 'bar', 'backgroundColor': 'rgba(23, 162, 184, 0.7)', 'borderColor': 'rgba(23, 162, 184, 1)'
+        }
+
+    # EBITDA
+    if 'EBITDA' in income_stmt.columns:
+        data['EBITDA'] = {
+            'labels': income_stmt.index.strftime('%Y-%m-%d').tolist(),
+            'data': clean_data(income_stmt['EBITDA'].tolist()),
+            'type': 'bar', 'backgroundColor': 'rgba(255, 193, 7, 0.7)', 'borderColor': 'rgba(255, 193, 7, 1)'
+        }
+
+    # Dividends
+    if not dividends.empty:
+        data['Dividends'] = {
+            'labels': dividends.index.strftime('%Y-%m-%d').tolist(),
+            'data': clean_data(dividends.round(2).tolist()),
+            'type': 'bar', 'backgroundColor': 'rgba(108, 117, 125, 0.7)', 'borderColor': 'rgba(108, 117, 125, 1)'
+        }
+        
+    return data
+
 @app.route('/get_insights_data', methods=['GET'])
 @limiter.limit("30 per minute")
 @token_required
@@ -204,87 +258,38 @@ def get_insights_data(current_user):
     try:
         ticker = yf.Ticker(ticker_symbol)
         
-        # 1. Price Data (All time)
+        # Price Data (All time)
         hist = ticker.history(period="max")
         price_data = {
-            'labels': hist.index.strftime('%Y-%m-%d').tolist(),
-            'data': clean_data(hist['Close'].round(2).tolist()),
-            'type': 'line',
-            'backgroundColor': 'rgba(0, 123, 255, 0.1)',
-            'borderColor': 'rgba(0, 123, 255, 1)'
+            'Price (All Time)': {
+                'labels': hist.index.strftime('%Y-%m-%d').tolist(),
+                'data': clean_data(hist['Close'].round(2).tolist()),
+                'type': 'line', 'backgroundColor': 'rgba(0, 123, 255, 0.1)', 'borderColor': 'rgba(0, 123, 255, 1)'
+            }
         }
 
-        # 2. Financials (Annual)
-        income_stmt = ticker.income_stmt.T.sort_index()
-        cashflow_stmt = ticker.cashflow.T.sort_index()
+        # Annual Data
+        annual_income = ticker.financials.T.sort_index()
+        annual_cashflow = ticker.cashflow.T.sort_index()
+        annual_dividends = ticker.dividends.resample('YE').sum()
+        annual_data = process_financial_data(annual_income, annual_cashflow, annual_dividends)
+
+        # Quarterly Data
+        quarterly_income = ticker.quarterly_financials.T.sort_index()
+        quarterly_cashflow = ticker.quarterly_cashflow.T.sort_index()
+        quarterly_dividends = ticker.dividends.resample('QE').sum()
+        quarterly_data = process_financial_data(quarterly_income, quarterly_cashflow, quarterly_dividends)
         
-        revenue_data = {
-            'labels': income_stmt.index.strftime('%Y').tolist(),
-            'data': clean_data(income_stmt['Total Revenue'].tolist()) if 'Total Revenue' in income_stmt.columns else [],
-            'type': 'bar',
-            'backgroundColor': 'rgba(40, 167, 69, 0.7)',
-            'borderColor': 'rgba(40, 167, 69, 1)'
-        }
-        
-        free_cash_flow_data = {
-            'labels': cashflow_stmt.index.strftime('%Y').tolist(),
-            'data': clean_data(cashflow_stmt['Free Cash Flow'].tolist()) if 'Free Cash Flow' in cashflow_stmt.columns else [],
-            'type': 'bar',
-            'backgroundColor': 'rgba(102, 16, 242, 0.7)',
-            'borderColor': 'rgba(102, 16, 242, 1)'
+        final_data = {
+            'price': price_data,
+            'annual': annual_data,
+            'quarterly': quarterly_data
         }
 
-        ebitda_data = {
-            'labels': income_stmt.index.strftime('%Y').tolist(),
-            'data': clean_data(income_stmt['EBITDA'].tolist()) if 'EBITDA' in income_stmt.columns else [],
-            'type': 'bar',
-            'backgroundColor': 'rgba(255, 193, 7, 0.7)',
-            'borderColor': 'rgba(255, 193, 7, 1)'
-        }
-        
-        net_income_data = {
-            'labels': income_stmt.index.strftime('%Y').tolist(),
-            'data': clean_data(income_stmt['Net Income'].tolist()) if 'Net Income' in income_stmt.columns else [],
-            'type': 'bar',
-            'backgroundColor': 'rgba(23, 162, 184, 0.7)',
-            'borderColor': 'rgba(23, 162, 184, 1)'
-        }
+        if not annual_data and not quarterly_data:
+             return jsonify({'error': f'Could not find sufficient insights data for {ticker_symbol}.'}), 404
 
-        # 3. EPS Data (Annual)
-        eps_data = {
-            'labels': income_stmt.index.strftime('%Y').tolist(),
-            'data': clean_data(income_stmt['Basic EPS'].tolist()) if 'Basic EPS' in income_stmt.columns else [],
-            'type': 'line',
-            'backgroundColor': 'rgba(253, 126, 20, 0.1)',
-            'borderColor': 'rgba(253, 126, 20, 1)'
-        }
-
-        # 4. Dividends (Annual Sum)
-        dividends = ticker.dividends.resample('YE').sum()
-        dividends_data = {
-            'labels': dividends.index.strftime('%Y').tolist(),
-            'data': clean_data(dividends.round(2).tolist()),
-            'type': 'bar',
-            'backgroundColor': 'rgba(108, 117, 125, 0.7)',
-            'borderColor': 'rgba(108, 117, 125, 1)'
-        }
-
-        insights_data = {
-            'Price (All Time)': price_data,
-            'Annual Revenue': revenue_data,
-            'Annual Free Cash Flow': free_cash_flow_data,
-            'Annual EPS': eps_data,
-            'Annual Net Income': net_income_data,
-            'Annual EBITDA': ebitda_data,
-            'Annual Dividends': dividends_data,
-        }
-        
-        insights_data_filtered = {k: v for k, v in insights_data.items() if v.get('data')}
-
-        if not insights_data_filtered:
-            return jsonify({'error': f'Could not find sufficient insights data for {ticker_symbol}.'}), 404
-
-        return jsonify(insights_data_filtered), 200
+        return jsonify(final_data), 200
 
     except Exception as e:
         return jsonify({'error': f'An unexpected error occurred while fetching insights data for {ticker_symbol}. Details: {str(e)}'}), 500
