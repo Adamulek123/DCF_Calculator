@@ -4,8 +4,8 @@ from flask_cors import CORS
 import pandas as pd
 import os
 import firebase_admin
-from firebase_admin import credentials, auth, firestore
-import jwt
+from firebase_admin import credentials, auth, firestore # Import auth
+import jwt # Still needed if you have other custom JWTs, but not for user auth
 import datetime
 import requests
 from functools import wraps
@@ -40,12 +40,13 @@ if encoded_key:
     except Exception as e:
         print(f"Error initializing Firebase Admin SDK from secret: {e}")
 else:
-    print("FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable not found.")
+    print("FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable not found. Firebase features will be limited.")
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'your_super_secret_jwt_key_replace_me_for_local_dev')
+# SECRET_KEY is no longer needed for Firebase Auth tokens
+# SECRET_KEY = os.environ.get('SECRET_KEY', 'your_super_secret_jwt_key_replace_me_for_local_dev')
 
-# --- Authentication Decorator ---
-def token_required(f):
+# --- Authentication Decorator (Updated for Firebase ID Token) ---
+def firebase_token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = None
@@ -53,73 +54,43 @@ def token_required(f):
             token = request.headers['Authorization'].split(" ")[1]
 
         if not token:
-            return jsonify({'message': 'Token is missing!'}), 401
+            return jsonify({'message': 'Firebase ID Token is missing!'}), 401
 
         try:
-            data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-            current_user = data['username']
-            return f(current_user, *args, **kwargs)
-        except jwt.ExpiredSignatureError:
-            return jsonify({'message': 'Token has expired!'}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({'message': 'Token is invalid!'}), 401
+            # Verify the Firebase ID token
+            decoded_token = auth.verify_id_token(token)
+            uid = decoded_token['uid']
+            # You can also get other user info like email from decoded_token
+            # email = decoded_token.get('email')
+            return f(uid, *args, **kwargs) # Pass uid as current_user
+        except auth.AuthError as e:
+            # Handle various Firebase Auth errors (e.g., token expired, invalid)
+            return jsonify({'message': f'Firebase Authentication Error: {e.code}'}), 401
         except Exception as e:
             return jsonify({'message': f'Token processing error: {str(e)}'}), 401
     return decorated
 
-# --- User Management Endpoints ---
-@app.route('/register', methods=['POST'])
-@limiter.limit("5 per hour")
-def register():
-    if not db:
-        return jsonify({'message': 'Database not configured, cannot register user.'}), 500
-    users_ref = db.collection('users')
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
+# --- User Management Endpoints (Removed/Obsolete for Firebase Auth) ---
+# These endpoints are now handled directly by Firebase Authentication on the frontend.
+# Keeping them commented out for reference, but they should not be used.
 
-    if not username or not password:
-        return jsonify({'message': 'Username and password are required'}), 400
+# @app.route('/register', methods=['POST'])
+# @limiter.limit("5 per hour")
+# def register():
+#     # This logic is now handled by Firebase `createUserWithEmailAndPassword` on frontend
+#     return jsonify({'message': 'Registration handled by Firebase Authentication.'}), 405
 
-    user_doc = users_ref.document(username).get()
-    if user_doc.exists:
-        return jsonify({'message': 'User already exists'}), 409
-
-    users_ref.document(username).set({
-        'username': username,
-        'password': password
-    })
-    return jsonify({'message': 'User registered successfully'}), 201
-
-@app.route('/login', methods=['POST'])
-@limiter.limit("10 per hour")
-def login():
-    if not db:
-        return jsonify({'message': 'Database not configured, cannot log in.'}), 500
-    users_ref = db.collection('users')
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-
-    if not username or not password:
-        return jsonify({'message': 'Username and password are required'}), 400
-
-    user_doc = users_ref.document(username).get()
-    if not user_doc.exists or user_doc.to_dict()['password'] != password:
-        return jsonify({'message': 'Invalid credentials'}), 401
-
-    token = jwt.encode({
-        'username': username,
-        'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
-    }, SECRET_KEY, algorithm="HS256")
-
-    return jsonify({'token': token}), 200
+# @app.route('/login', methods=['POST'])
+# @limiter.limit("10 per hour")
+# def login():
+#     # This logic is now handled by Firebase `signInWithEmailAndPassword` or `signInWithPopup` on frontend
+#     return jsonify({'message': 'Login handled by Firebase Authentication.'}), 405
 
 # --- DCF Calculator Endpoints ---
 @app.route('/get_trailing_metrics', methods=['GET'])
 @limiter.limit("60 per minute")
-@token_required
-def get_trailing_metrics(current_user):
+@firebase_token_required # Use the new Firebase token decorator
+def get_trailing_metrics(current_user_uid): # Renamed argument to reflect UID
     ticker_symbol = request.args.get('ticker')
 
     if not ticker_symbol:
@@ -250,8 +221,8 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
 
 @app.route('/get_insights_data', methods=['GET'])
 @limiter.limit("30 per minute")
-@token_required
-def get_insights_data(current_user):
+@firebase_token_required # Use the new Firebase token decorator
+def get_insights_data(current_user_uid): # Renamed argument to reflect UID
     ticker_symbol = request.args.get('ticker')
     if not ticker_symbol:
         return jsonify({'error': 'Ticker symbol is required'}), 400
@@ -273,6 +244,9 @@ def get_insights_data(current_user):
         }
 
         # Annual Data
+        # yfinance.financials and .cashflow typically return last 4-5 years by default
+        # There's no direct 'period' argument for these in yfinance.
+        # If you need more historical financial statements, you'd need a different API.
         annual_income = ticker.financials.T.sort_index()
         annual_cashflow = ticker.cashflow.T.sort_index()
         annual_dividends = ticker.dividends.resample('YE').sum()
@@ -300,8 +274,8 @@ def get_insights_data(current_user):
 
 
 @app.route('/save_calculation', methods=['POST'])
-@token_required
-def save_calculation(current_user):
+@firebase_token_required # Use the new Firebase token decorator
+def save_calculation(current_user_uid): # Renamed argument to reflect UID
     if not db:
         return jsonify({'message': 'Database not configured, cannot save calculation.'}), 500
     data = request.get_json()
@@ -313,8 +287,9 @@ def save_calculation(current_user):
         return jsonify({'message': 'Missing data for saving calculation'}), 400
 
     try:
-        user_calculations_ref = db.collection('users').document(current_user).collection('calculations')
-        doc_ref = user_calculations_ref.document(name)
+        # Use Firebase UID for user-specific collections
+        user_calculations_ref = db.collection('users').document(current_user_uid).collection('calculations')
+        doc_ref = user_calculations_ref.document(name) # Still using name as document ID for calculations
         doc_ref.set({
             'ticker': ticker,
             'name': name,
@@ -326,12 +301,13 @@ def save_calculation(current_user):
         return jsonify({'message': f'Error saving calculation: {str(e)}'}), 500
 
 @app.route('/load_calculations', methods=['GET'])
-@token_required
-def load_calculations(current_user):
+@firebase_token_required # Use the new Firebase token decorator
+def load_calculations(current_user_uid): # Renamed argument to reflect UID
     if not db:
         return jsonify({'message': 'Database not configured, cannot load calculations.'}), 500
     try:
-        user_calculations_ref = db.collection('users').document(current_user).collection('calculations')
+        # Use Firebase UID for user-specific collections
+        user_calculations_ref = db.collection('users').document(current_user_uid).collection('calculations')
         docs = user_calculations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
         
         calculations = []
@@ -345,15 +321,16 @@ def load_calculations(current_user):
         return jsonify({'message': f'Error loading calculations: {str(e)}'}), 500
 
 @app.route('/delete_calculation/<string:calc_id>', methods=['DELETE'])
-@token_required
-def delete_calculation(current_user, calc_id):
+@firebase_token_required # Use the new Firebase token decorator
+def delete_calculation(current_user_uid, calc_id): # Renamed argument to reflect UID
     if not db:
         return jsonify({'message': 'Database not configured, cannot delete calculation.'}), 500
     if not calc_id:
         return jsonify({'message': 'Calculation ID is required'}), 400
     
     try:
-        doc_ref = db.collection('users').document(current_user).collection('calculations').document(calc_id)
+        # Use Firebase UID for user-specific collections
+        doc_ref = db.collection('users').document(current_user_uid).collection('calculations').document(calc_id)
         doc_ref.delete()
         return jsonify({'message': f'Calculation "{calc_id}" deleted successfully!'}), 200
     except Exception as e:
