@@ -4,8 +4,8 @@ from flask_cors import CORS
 import pandas as pd
 import os
 import firebase_admin
-from firebase_admin import credentials, auth, firestore # Import auth
-import jwt # Still needed if you have other custom JWTs, but not for user auth
+from firebase_admin import credentials, auth, firestore 
+import jwt 
 import datetime
 import requests
 from functools import wraps
@@ -15,10 +15,15 @@ import base64
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
+#To do list
+#Expand the Data
+#Better Visualizations
+#Stock Screener
+
 app = Flask(__name__)
 CORS(app)
 
-# --- Rate Limiting Setup ---
+
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -26,7 +31,7 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
-# --- Firebase Initialization ---
+
 encoded_key = os.environ.get('FIREBASE_SERVICE_ACCOUNT_KEY_BASE64')
 db = None
 if encoded_key:
@@ -42,10 +47,8 @@ if encoded_key:
 else:
     print("FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable not found. Firebase features will be limited.")
 
-# SECRET_KEY is no longer needed for Firebase Auth tokens
-# SECRET_KEY = os.environ.get('SECRET_KEY', 'your_super_secret_jwt_key_replace_me_for_local_dev')
 
-# --- Authentication Decorator (Updated for Firebase ID Token) ---
+
 def firebase_token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -57,40 +60,19 @@ def firebase_token_required(f):
             return jsonify({'message': 'Firebase ID Token is missing!'}), 401
 
         try:
-            # Verify the Firebase ID token
             decoded_token = auth.verify_id_token(token)
             uid = decoded_token['uid']
-            # You can also get other user info like email from decoded_token
-            # email = decoded_token.get('email')
-            return f(uid, *args, **kwargs) # Pass uid as current_user
+            return f(uid, *args, **kwargs) 
         except auth.AuthError as e:
-            # Handle various Firebase Auth errors (e.g., token expired, invalid)
             return jsonify({'message': f'Firebase Authentication Error: {e.code}'}), 401
         except Exception as e:
             return jsonify({'message': f'Token processing error: {str(e)}'}), 401
     return decorated
 
-# --- User Management Endpoints (Removed/Obsolete for Firebase Auth) ---
-# These endpoints are now handled directly by Firebase Authentication on the frontend.
-# Keeping them commented out for reference, but they should not be used.
-
-# @app.route('/register', methods=['POST'])
-# @limiter.limit("5 per hour")
-# def register():
-#     # This logic is now handled by Firebase `createUserWithEmailAndPassword` on frontend
-#     return jsonify({'message': 'Registration handled by Firebase Authentication.'}), 405
-
-# @app.route('/login', methods=['POST'])
-# @limiter.limit("10 per hour")
-# def login():
-#     # This logic is now handled by Firebase `signInWithEmailAndPassword` or `signInWithPopup` on frontend
-#     return jsonify({'message': 'Login handled by Firebase Authentication.'}), 405
-
-# --- DCF Calculator Endpoints ---
 @app.route('/get_trailing_metrics', methods=['GET'])
 @limiter.limit("60 per minute")
-@firebase_token_required # Use the new Firebase token decorator
-def get_trailing_metrics(current_user_uid): # Renamed argument to reflect UID
+@firebase_token_required 
+def get_trailing_metrics(current_user_uid): 
     ticker_symbol = request.args.get('ticker')
 
     if not ticker_symbol:
@@ -161,15 +143,13 @@ def get_trailing_metrics(current_user_uid): # Renamed argument to reflect UID
         return jsonify({'error': f'An unexpected error occurred while fetching or calculating data for {ticker_symbol}. Please try again later. Details: {str(e)}'}), 500
 
 def clean_data(data_list):
-    """Converts NaN to None for JSON compatibility."""
+    #convert NaN to None
     return [item if pd.notna(item) else None for item in data_list]
 
 def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
-    """Helper function to process financial statements into chart data."""
     data = {}
     date_format = '%Y' if period_type == 'annual' else '%Y-%m-%d'
     
-    # Revenue
     if 'Total Revenue' in income_stmt.columns:
         data['Revenue'] = {
             'labels': income_stmt.index.strftime(date_format).tolist(),
@@ -177,7 +157,6 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
             'type': 'bar', 'backgroundColor': 'rgba(40, 167, 69, 0.7)', 'borderColor': 'rgba(40, 167, 69, 1)'
         }
     
-    # Free Cash Flow
     if 'Free Cash Flow' in cashflow_stmt.columns:
         data['Free Cash Flow'] = {
             'labels': cashflow_stmt.index.strftime(date_format).tolist(),
@@ -185,7 +164,6 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
             'type': 'bar', 'backgroundColor': 'rgba(102, 16, 242, 0.7)', 'borderColor': 'rgba(102, 16, 242, 1)'
         }
 
-    # EPS
     if 'Basic EPS' in income_stmt.columns:
         data['EPS'] = {
             'labels': income_stmt.index.strftime(date_format).tolist(),
@@ -193,7 +171,6 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
             'type': 'line', 'backgroundColor': 'rgba(253, 126, 20, 0.1)', 'borderColor': 'rgba(253, 126, 20, 1)'
         }
 
-    # Net Income
     if 'Net Income' in income_stmt.columns:
         data['Net Income'] = {
             'labels': income_stmt.index.strftime(date_format).tolist(),
@@ -201,7 +178,6 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
             'type': 'bar', 'backgroundColor': 'rgba(23, 162, 184, 0.7)', 'borderColor': 'rgba(23, 162, 184, 1)'
         }
 
-    # EBITDA
     if 'EBITDA' in income_stmt.columns:
         data['EBITDA'] = {
             'labels': income_stmt.index.strftime(date_format).tolist(),
@@ -209,7 +185,6 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
             'type': 'bar', 'backgroundColor': 'rgba(255, 193, 7, 0.7)', 'borderColor': 'rgba(255, 193, 7, 1)'
         }
 
-    # Dividends
     if not dividends.empty:
         data['Dividends'] = {
             'labels': dividends.index.strftime(date_format).tolist(),
@@ -221,8 +196,8 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
 
 @app.route('/get_insights_data', methods=['GET'])
 @limiter.limit("30 per minute")
-@firebase_token_required # Use the new Firebase token decorator
-def get_insights_data(current_user_uid): # Renamed argument to reflect UID
+@firebase_token_required 
+def get_insights_data(current_user_uid): 
     ticker_symbol = request.args.get('ticker')
     if not ticker_symbol:
         return jsonify({'error': 'Ticker symbol is required'}), 400
@@ -230,11 +205,8 @@ def get_insights_data(current_user_uid): # Renamed argument to reflect UID
     try:
         ticker = yf.Ticker(ticker_symbol)
         
-        # Price Data (All time)
         hist = ticker.history(period="max")
-        # Ensure price data labels are formatted for annual when appropriate, or daily for 'max'
-        price_labels = hist.index.strftime('%Y-%m-%d').tolist() # Keep full date for price data as it can be daily
-        
+        price_labels = hist.index.strftime('%Y-%m-%d').tolist() 
         price_data = {
             'Price (All Time)': {
                 'labels': price_labels,
@@ -243,16 +215,12 @@ def get_insights_data(current_user_uid): # Renamed argument to reflect UID
             }
         }
 
-        # Annual Data
-        # yfinance.financials and .cashflow typically return last 4-5 years by default
-        # There's no direct 'period' argument for these in yfinance.
-        # If you need more historical financial statements, you'd need a different API.
+
         annual_income = ticker.financials.T.sort_index()
         annual_cashflow = ticker.cashflow.T.sort_index()
         annual_dividends = ticker.dividends.resample('YE').sum()
         annual_data = process_financial_data(annual_income, annual_cashflow, annual_dividends, 'annual')
 
-        # Quarterly Data
         quarterly_income = ticker.quarterly_financials.T.sort_index()
         quarterly_cashflow = ticker.quarterly_cashflow.T.sort_index()
         quarterly_dividends = ticker.dividends.resample('QE').sum()
@@ -274,8 +242,8 @@ def get_insights_data(current_user_uid): # Renamed argument to reflect UID
 
 
 @app.route('/save_calculation', methods=['POST'])
-@firebase_token_required # Use the new Firebase token decorator
-def save_calculation(current_user_uid): # Renamed argument to reflect UID
+@firebase_token_required 
+def save_calculation(current_user_uid): 
     if not db:
         return jsonify({'message': 'Database not configured, cannot save calculation.'}), 500
     data = request.get_json()
@@ -287,9 +255,8 @@ def save_calculation(current_user_uid): # Renamed argument to reflect UID
         return jsonify({'message': 'Missing data for saving calculation'}), 400
 
     try:
-        # Use Firebase UID for user-specific collections
         user_calculations_ref = db.collection('users').document(current_user_uid).collection('calculations')
-        doc_ref = user_calculations_ref.document(name) # Still using name as document ID for calculations
+        doc_ref = user_calculations_ref.document(name) 
         doc_ref.set({
             'ticker': ticker,
             'name': name,
@@ -301,12 +268,11 @@ def save_calculation(current_user_uid): # Renamed argument to reflect UID
         return jsonify({'message': f'Error saving calculation: {str(e)}'}), 500
 
 @app.route('/load_calculations', methods=['GET'])
-@firebase_token_required # Use the new Firebase token decorator
-def load_calculations(current_user_uid): # Renamed argument to reflect UID
+@firebase_token_required 
+def load_calculations(current_user_uid): 
     if not db:
         return jsonify({'message': 'Database not configured, cannot load calculations.'}), 500
     try:
-        # Use Firebase UID for user-specific collections
         user_calculations_ref = db.collection('users').document(current_user_uid).collection('calculations')
         docs = user_calculations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
         
@@ -321,15 +287,14 @@ def load_calculations(current_user_uid): # Renamed argument to reflect UID
         return jsonify({'message': f'Error loading calculations: {str(e)}'}), 500
 
 @app.route('/delete_calculation/<string:calc_id>', methods=['DELETE'])
-@firebase_token_required # Use the new Firebase token decorator
-def delete_calculation(current_user_uid, calc_id): # Renamed argument to reflect UID
+@firebase_token_required 
+def delete_calculation(current_user_uid, calc_id): 
     if not db:
         return jsonify({'message': 'Database not configured, cannot delete calculation.'}), 500
     if not calc_id:
         return jsonify({'message': 'Calculation ID is required'}), 400
     
     try:
-        # Use Firebase UID for user-specific collections
         doc_ref = db.collection('users').document(current_user_uid).collection('calculations').document(calc_id)
         doc_ref.delete()
         return jsonify({'message': f'Calculation "{calc_id}" deleted successfully!'}), 200
