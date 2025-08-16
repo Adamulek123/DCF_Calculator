@@ -4,8 +4,8 @@ from flask_cors import CORS
 import pandas as pd
 import os
 import firebase_admin
-from firebase_admin import credentials, auth, firestore 
-import jwt 
+from firebase_admin import credentials, auth, firestore
+import jwt
 import datetime
 import requests
 from functools import wraps
@@ -14,6 +14,14 @@ import json
 import base64
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+
+# --- NEW IMPORTS for AI Analysis ---
+import google.generativeai as genai
+from sec_api import ExtractorApi
+from dotenv import load_dotenv
+
+# Load environment variables from a .env file if it exists (for local development)
+load_dotenv()
 
 #To do list
 #Expand the Data
@@ -62,17 +70,125 @@ def firebase_token_required(f):
         try:
             decoded_token = auth.verify_id_token(token)
             uid = decoded_token['uid']
-            return f(uid, *args, **kwargs) 
+            return f(uid, *args, **kwargs)
         except auth.AuthError as e:
             return jsonify({'message': f'Firebase Authentication Error: {e.code}'}), 401
         except Exception as e:
             return jsonify({'message': f'Token processing error: {str(e)}'}), 401
     return decorated
 
+# --- NEW AI & SEC ANALYSIS FUNCTIONS ---
+
+def get_filing_section_text(ticker: str, form_type: str = "10-K") -> str:
+    """
+    Fetches the MD&A section from the latest filing for a given ticker.
+    MD&A is Item 7 in a 10-K and Item 2 in a 10-Q.
+    """
+    api_key = os.getenv("SEC_API_KEY")
+    if not api_key:
+        raise ValueError("SEC_API_KEY not found in environment variables.")
+
+    try:
+        extractor_api = ExtractorApi(api_key=api_key)
+        filings = extractor_api.get_filings(ticker=ticker, form_type=form_type, limit=1)
+        if not filings.get('filings'):
+            raise FileNotFoundError(f"No {form_type} filings found for ticker {ticker}.")
+
+        latest_filing_url = filings['filings'][0]['linkToFilingDetails']
+        section_item = "item_7" if form_type == "10-K" else "item_2"
+
+        section_text = extractor_api.get_section(
+            filing_url=latest_filing_url,
+            section=section_item,
+            return_type="text"
+        )
+        return section_text
+    except Exception as e:
+        print(f"Error fetching SEC data: {e}")
+        raise
+
+def discover_and_extract_kpis_with_ai(filing_text: str, ticker: str) -> str:
+    """
+    Uses Gemini to first DISCOVER relevant KPIs for any company and then extract them.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not found in environment variables.")
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-1.5-pro-latest')
+
+    prompt = f"""
+    You are a world-class financial analyst AI. Your task is to analyze the following 'Management’s Discussion and Analysis' section from a company's filing for the ticker '{ticker}'.
+
+    Your analysis must proceed in two stages:
+    1.  **IDENTIFY:** First, read the text to understand the company's business model. Identify the 5-7 most critical Key Performance Indicators (KPIs) that truly define its performance. Focus on what makes this business unique.
+    2.  **EXTRACT:** Second, for each KPI you've identified, extract its most recent numerical value, its unit (e.g., 'USD Billions', 'Percent', 'Units'), and a brief, one-sentence context explaining the metric.
+
+    Present your final output ONLY as a single, valid JSON object. Do not include any text before or after the JSON.
+    The JSON object must have the following structure:
+    {{
+      "ticker": "{ticker}",
+      "period": "Fiscal Year/Quarter Ending [Date]",
+      "discovered_kpis": {{
+        "Human-Readable KPI Name 1": {{
+          "value": "[number or string]",
+          "unit": "e.g., USD Billions",
+          "context": "A brief explanation of this KPI."
+        }}
+      }}
+    }}
+
+    Now, perform this analysis on the following filing text:
+    ---
+    {filing_text[:35000]}
+    ---
+    """
+    try:
+        response = model.generate_content(prompt)
+        json_response_text = response.text.strip().replace("```json", "").replace("```", "")
+        return json.loads(json_response_text) # Return as a Python dict
+    except Exception as e:
+        print(f"Error interacting with Gemini API: {e}")
+        raise
+
+@app.route('/analyze_filing', methods=['GET'])
+@limiter.limit("5 per hour") # Stricter limit for this expensive endpoint
+@firebase_token_required
+def analyze_filing(current_user_uid):
+    ticker_symbol = request.args.get('ticker')
+    form_type = request.args.get('form_type', '10-K') # Default to 10-K
+
+    if not ticker_symbol:
+        return jsonify({'error': 'Ticker symbol is required'}), 400
+    if form_type not in ['10-K', '10-Q']:
+        return jsonify({'error': 'Invalid form_type. Must be "10-K" or "10-Q".'}), 400
+
+    try:
+        # 1. Fetch filing text
+        filing_text = get_filing_section_text(ticker_symbol, form_type)
+        if not filing_text:
+            return jsonify({'error': f'Could not retrieve filing text for {ticker_symbol}.'}), 404
+
+        # 2. Analyze with AI
+        ai_analysis_data = discover_and_extract_kpis_with_ai(filing_text, ticker_symbol)
+
+        return jsonify(ai_analysis_data), 200
+
+    except FileNotFoundError as e:
+        return jsonify({'error': str(e)}), 404
+    except ValueError as e: # Catches API key errors
+        return jsonify({'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'error': f'An unexpected error occurred during AI analysis: {str(e)}'}), 500
+
+
+# --- EXISTING ENDPOINTS ---
+
 @app.route('/get_trailing_metrics', methods=['GET'])
 @limiter.limit("60 per minute")
-@firebase_token_required 
-def get_trailing_metrics(current_user_uid): 
+@firebase_token_required
+def get_trailing_metrics(current_user_uid):
     ticker_symbol = request.args.get('ticker')
 
     if not ticker_symbol:
@@ -103,7 +219,7 @@ def get_trailing_metrics(current_user_uid):
         fcf_yield = None
         if free_cash_flow is not None and market_cap and market_cap > 0:
             fcf_yield = free_cash_flow / market_cap
-        
+
         shares_outstanding = info.get('sharesOutstanding')
         fcf_share = None
         if free_cash_flow is not None and shares_outstanding and shares_outstanding > 0:
@@ -149,14 +265,14 @@ def clean_data(data_list):
 def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
     data = {}
     date_format = '%Y' if period_type == 'annual' else '%Y-%m-%d'
-    
+
     if 'Total Revenue' in income_stmt.columns:
         data['Revenue'] = {
             'labels': income_stmt.index.strftime(date_format).tolist(),
             'data': clean_data(income_stmt['Total Revenue'].tolist()),
             'type': 'bar', 'backgroundColor': 'rgba(40, 167, 69, 0.7)', 'borderColor': 'rgba(40, 167, 69, 1)'
         }
-    
+
     if 'Free Cash Flow' in cashflow_stmt.columns:
         data['Free Cash Flow'] = {
             'labels': cashflow_stmt.index.strftime(date_format).tolist(),
@@ -191,22 +307,22 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
             'data': clean_data(dividends.round(2).tolist()),
             'type': 'bar', 'backgroundColor': 'rgba(108, 117, 125, 0.7)', 'borderColor': 'rgba(108, 117, 125, 1)'
         }
-        
+
     return data
 
 @app.route('/get_insights_data', methods=['GET'])
 @limiter.limit("30 per minute")
-@firebase_token_required 
-def get_insights_data(current_user_uid): 
+@firebase_token_required
+def get_insights_data(current_user_uid):
     ticker_symbol = request.args.get('ticker')
     if not ticker_symbol:
         return jsonify({'error': 'Ticker symbol is required'}), 400
 
     try:
         ticker = yf.Ticker(ticker_symbol)
-        
+
         hist = ticker.history(period="max")
-        price_labels = hist.index.strftime('%Y-%m-%d').tolist() 
+        price_labels = hist.index.strftime('%Y-%m-%d').tolist()
         price_data = {
             'Price (All Time)': {
                 'labels': price_labels,
@@ -225,7 +341,7 @@ def get_insights_data(current_user_uid):
         quarterly_cashflow = ticker.quarterly_cashflow.T.sort_index()
         quarterly_dividends = ticker.dividends.resample('QE').sum()
         quarterly_data = process_financial_data(quarterly_income, quarterly_cashflow, quarterly_dividends, 'quarterly')
-        
+
         final_data = {
             'price': price_data,
             'annual': annual_data,
@@ -242,8 +358,8 @@ def get_insights_data(current_user_uid):
 
 
 @app.route('/save_calculation', methods=['POST'])
-@firebase_token_required 
-def save_calculation(current_user_uid): 
+@firebase_token_required
+def save_calculation(current_user_uid):
     if not db:
         return jsonify({'message': 'Database not configured, cannot save calculation.'}), 500
     data = request.get_json()
@@ -256,7 +372,7 @@ def save_calculation(current_user_uid):
 
     try:
         user_calculations_ref = db.collection('users').document(current_user_uid).collection('calculations')
-        doc_ref = user_calculations_ref.document(name) 
+        doc_ref = user_calculations_ref.document(name)
         doc_ref.set({
             'ticker': ticker,
             'name': name,
@@ -268,32 +384,32 @@ def save_calculation(current_user_uid):
         return jsonify({'message': f'Error saving calculation: {str(e)}'}), 500
 
 @app.route('/load_calculations', methods=['GET'])
-@firebase_token_required 
-def load_calculations(current_user_uid): 
+@firebase_token_required
+def load_calculations(current_user_uid):
     if not db:
         return jsonify({'message': 'Database not configured, cannot load calculations.'}), 500
     try:
         user_calculations_ref = db.collection('users').document(current_user_uid).collection('calculations')
         docs = user_calculations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
-        
+
         calculations = []
         for doc in docs:
             calc_data = doc.to_dict()
             calc_data['id'] = doc.id
             calculations.append(calc_data)
-        
+
         return jsonify(calculations), 200
     except Exception as e:
         return jsonify({'message': f'Error loading calculations: {str(e)}'}), 500
 
 @app.route('/delete_calculation/<string:calc_id>', methods=['DELETE'])
-@firebase_token_required 
-def delete_calculation(current_user_uid, calc_id): 
+@firebase_token_required
+def delete_calculation(current_user_uid, calc_id):
     if not db:
         return jsonify({'message': 'Database not configured, cannot delete calculation.'}), 500
     if not calc_id:
         return jsonify({'message': 'Calculation ID is required'}), 400
-    
+
     try:
         doc_ref = db.collection('users').document(current_user_uid).collection('calculations').document(calc_id)
         doc_ref.delete()
