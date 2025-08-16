@@ -4,8 +4,8 @@ from flask_cors import CORS
 import pandas as pd
 import os
 import firebase_admin
-from firebase_admin import credentials, auth, firestore
-import jwt
+from firebase_admin import credentials, auth, firestore 
+import jwt 
 import datetime
 import requests
 from functools import wraps
@@ -15,17 +15,13 @@ import base64
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
-import google.generativeai as genai
-from sec_api import QueryApi, RenderApi
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv
-
-load_dotenv()
+#To do list
+#Expand the Data
+#Better Visualizations
+#Stock Screener
 
 app = Flask(__name__)
-
-# --- FIX: Configure CORS to allow requests from your specific frontend origin ---
-CORS(app, origins=["https://adamulek123.github.io"])
+CORS(app)
 
 
 limiter = Limiter(
@@ -66,192 +62,17 @@ def firebase_token_required(f):
         try:
             decoded_token = auth.verify_id_token(token)
             uid = decoded_token['uid']
-            return f(uid, *args, **kwargs)
+            return f(uid, *args, **kwargs) 
         except auth.AuthError as e:
             return jsonify({'message': f'Firebase Authentication Error: {e.code}'}), 401
         except Exception as e:
             return jsonify({'message': f'Token processing error: {str(e)}'}), 401
     return decorated
 
-# --- NEW AI & SEC ANALYSIS FUNCTIONS ---
-
-
-
-
-
-
-# --- NEW HYBRID KPI EXTRACTION FUNCTIONS ---
-
-def extract_financials_from_tables(soup):
-    extracted_data = {}
-    tables = soup.find_all('table')
-
-    # Keywords to identify financial statements
-    statement_keywords = {
-        'income_statement': ['Consolidated Statements of Operations', 'Consolidated Statements of Income'],
-        'balance_sheet': ['Consolidated Balance Sheets'],
-        'cash_flow': ['Consolidated Statements of Cash Flows']
-    }
-
-    segment_keywords = ['segment', 'geographic', 'product', 'division', 'region']
-    segment_data = {}
-
-    for table in tables:
-        table_text = table.get_text().lower()
-        # Check for income statement
-        if any(keyword.lower() in table_text for keyword in statement_keywords['income_statement']):
-            try:
-                df = pd.read_html(str(table))[0]
-                df = df.dropna(axis=1, how='all')
-                df.set_index(df.columns[0], inplace=True)
-                if 'Total Revenue' in df.index:
-                    extracted_data['revenue'] = df.loc['Total Revenue'].iloc[-1]
-                if 'Net Income' in df.index:
-                    extracted_data['net_income'] = df.loc['Net Income'].iloc[-1]
-                if 'Earnings Per Share, Basic' in df.index:
-                    extracted_data['eps'] = df.loc['Earnings Per Share, Basic'].iloc[-1]
-            except Exception as e:
-                print(f"Could not parse income statement table: {e}")
-
-        # Check for segment tables
-        if any(seg_kw in table_text for seg_kw in segment_keywords):
-            try:
-                df = pd.read_html(str(table))[0]
-                df = df.dropna(axis=1, how='all')
-                # Try to find segment columns/rows
-                # Heuristic: if first column contains segment names, and columns contain metrics
-                if df.shape[1] > 2:
-                    # Assume first column is segment name
-                    seg_col = df.columns[0]
-                    for metric in ['Revenue', 'Net Income', 'Operating Income', 'Earnings']:
-                        for col in df.columns:
-                            if metric.lower() in str(col).lower():
-                                for idx, row in df.iterrows():
-                                    seg_name = str(row[seg_col])
-                                    if seg_name and seg_name.lower() not in ['total', 'consolidated']:
-                                        key = f"{metric.lower().replace(' ', '_')}_by_segment"
-                                        if key not in segment_data:
-                                            segment_data[key] = {}
-                                        segment_data[key][seg_name] = row[col]
-            except Exception as e:
-                print(f"Could not parse segment table: {e}")
-
-    extracted_data.update(segment_data)
-    return extracted_data
-# Utility to extract non-financial KPIs from text with minimal AI calls
-def extract_nonfinancial_kpis(text, kpis_to_find):
-    extracted_kpis = {}
-    # Use regex to find sentences with KPI keywords
-    import re
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    for kpi in kpis_to_find:
-        found = False
-        for sentence in sentences:
-            if kpi.lower() in sentence.lower():
-                # Try to extract a number or percentage from the sentence
-                match = re.search(r'([\d,.]+%?)', sentence)
-                if match:
-                    extracted_kpis[kpi] = match.group(1)
-                    found = True
-                    break
-        if not found:
-            extracted_kpis[kpi] = None
-    return extracted_kpis
-
-def extract_kpis_with_targeted_ai(text, kpis_to_find):
-    extracted_kpis = {}
-    # A simple way to find sentences. A more robust solution would use NLTK or spaCy.
-    sentences = text.split('.')
-
-    for kpi in kpis_to_find:
-        for sentence in sentences:
-            if kpi.lower() in sentence.lower():
-                try:
-                    # Once we find a relevant sentence, we use the AI to extract the number.
-                    api_key = os.environ.get("GEMINI_API_KEY")
-                    if not api_key:
-                        raise ValueError("GEMINI_API_KEY not found in environment variables.")
-
-                    genai.configure(api_key=api_key)
-                    client = genai.Client()
-                    prompt = f"Extract the value for '{kpi}' from the following sentence. Return only the numerical value or a short string. Sentence: {sentence}"
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=prompt
-                    )
-                    extracted_kpis[kpi] = response.text.strip()
-                    # Break after finding the first occurrence to avoid multiple values
-                    break 
-                except Exception as e:
-                    print(f"Error during targeted AI extraction for '{kpi}': {e}")
-    
-    return extracted_kpis
-
-@app.route('/analyze_filing', methods=['GET'])
-@limiter.limit("5 per hour") # Stricter limit for this expensive endpoint
-@firebase_token_required
-def analyze_filing(current_user_uid):
-    ticker_symbol = request.args.get('ticker')
-    form_type = request.args.get('form_type', '10-K') # Default to 10-K
-
-    if not ticker_symbol:
-        return jsonify({'error': 'Ticker symbol is required'}), 400
-    if form_type not in ['10-K', '10-Q']:
-        return jsonify({'error': 'Invalid form_type. Must be "10-K" or "10-Q".'}), 400
-
-    try:
-        api_key = os.environ.get("SEC_API_KEY")
-        if not api_key:
-            raise ValueError("SEC_API_KEY not found in environment variables.")
-
-        # 1. Get filing URL
-        query_api = QueryApi(api_key=api_key)
-        query = {
-            "query": {"query_string": {"query": f"ticker:{ticker_symbol} AND formType:\"{form_type}\""}},
-            "from": "0",
-            "size": "1",
-            "sort": [{"filedAt": {"order": "desc"}}]
-        }
-        filings = query_api.get_filings(query)
-        if not filings.get('filings'):
-            raise FileNotFoundError(f"No {form_type} filings found for ticker {ticker_symbol}.")
-        
-        filing_url = filings['filings'][0]['linkToFilingDetails']
-
-        # 2. Get filing HTML
-        render_api = RenderApi(api_key=api_key)
-        filing_html = render_api.get_filing(filing_url)
-        soup = BeautifulSoup(filing_html, 'lxml')
-        
-        # 3. Extract data
-        financial_data = extract_financials_from_tables(soup)
-        
-
-        # For non-financial KPIs, use keyword/regex extraction first
-        filing_text = soup.get_text()
-        other_kpis = extract_nonfinancial_kpis(
-            filing_text,
-            kpis_to_find=["users", "engagement", "penetration to premium"]
-        )
-
-        # 4. Combine and return results
-        all_data = {**financial_data, **other_kpis}
-        return jsonify(all_data), 200
-
-    except FileNotFoundError as e:
-        return jsonify({'error': str(e)}), 404
-    except ValueError as e: # Catches API key errors
-        return jsonify({'error': str(e)}), 500
-    except Exception as e:
-        return jsonify({'error': f'An unexpected error occurred during analysis: {str(e)}'}), 500
-
-
-# --- EXISTING ENDPOINTS ---
-
 @app.route('/get_trailing_metrics', methods=['GET'])
 @limiter.limit("60 per minute")
-@firebase_token_required
-def get_trailing_metrics(current_user_uid):
+@firebase_token_required 
+def get_trailing_metrics(current_user_uid): 
     ticker_symbol = request.args.get('ticker')
 
     if not ticker_symbol:
@@ -282,7 +103,7 @@ def get_trailing_metrics(current_user_uid):
         fcf_yield = None
         if free_cash_flow is not None and market_cap and market_cap > 0:
             fcf_yield = free_cash_flow / market_cap
-
+        
         shares_outstanding = info.get('sharesOutstanding')
         fcf_share = None
         if free_cash_flow is not None and shares_outstanding and shares_outstanding > 0:
@@ -328,14 +149,14 @@ def clean_data(data_list):
 def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
     data = {}
     date_format = '%Y' if period_type == 'annual' else '%Y-%m-%d'
-
+    
     if 'Total Revenue' in income_stmt.columns:
         data['Revenue'] = {
             'labels': income_stmt.index.strftime(date_format).tolist(),
             'data': clean_data(income_stmt['Total Revenue'].tolist()),
             'type': 'bar', 'backgroundColor': 'rgba(40, 167, 69, 0.7)', 'borderColor': 'rgba(40, 167, 69, 1)'
         }
-
+    
     if 'Free Cash Flow' in cashflow_stmt.columns:
         data['Free Cash Flow'] = {
             'labels': cashflow_stmt.index.strftime(date_format).tolist(),
@@ -370,22 +191,22 @@ def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
             'data': clean_data(dividends.round(2).tolist()),
             'type': 'bar', 'backgroundColor': 'rgba(108, 117, 125, 0.7)', 'borderColor': 'rgba(108, 117, 125, 1)'
         }
-
+        
     return data
 
 @app.route('/get_insights_data', methods=['GET'])
 @limiter.limit("30 per minute")
-@firebase_token_required
-def get_insights_data(current_user_uid):
+@firebase_token_required 
+def get_insights_data(current_user_uid): 
     ticker_symbol = request.args.get('ticker')
     if not ticker_symbol:
         return jsonify({'error': 'Ticker symbol is required'}), 400
 
     try:
         ticker = yf.Ticker(ticker_symbol)
-
+        
         hist = ticker.history(period="max")
-        price_labels = hist.index.strftime('%Y-%m-%d').tolist()
+        price_labels = hist.index.strftime('%Y-%m-%d').tolist() 
         price_data = {
             'Price (All Time)': {
                 'labels': price_labels,
@@ -404,7 +225,7 @@ def get_insights_data(current_user_uid):
         quarterly_cashflow = ticker.quarterly_cashflow.T.sort_index()
         quarterly_dividends = ticker.dividends.resample('QE').sum()
         quarterly_data = process_financial_data(quarterly_income, quarterly_cashflow, quarterly_dividends, 'quarterly')
-
+        
         final_data = {
             'price': price_data,
             'annual': annual_data,
@@ -421,8 +242,8 @@ def get_insights_data(current_user_uid):
 
 
 @app.route('/save_calculation', methods=['POST'])
-@firebase_token_required
-def save_calculation(current_user_uid):
+@firebase_token_required 
+def save_calculation(current_user_uid): 
     if not db:
         return jsonify({'message': 'Database not configured, cannot save calculation.'}), 500
     data = request.get_json()
@@ -435,7 +256,7 @@ def save_calculation(current_user_uid):
 
     try:
         user_calculations_ref = db.collection('users').document(current_user_uid).collection('calculations')
-        doc_ref = user_calculations_ref.document(name)
+        doc_ref = user_calculations_ref.document(name) 
         doc_ref.set({
             'ticker': ticker,
             'name': name,
@@ -447,32 +268,32 @@ def save_calculation(current_user_uid):
         return jsonify({'message': f'Error saving calculation: {str(e)}'}), 500
 
 @app.route('/load_calculations', methods=['GET'])
-@firebase_token_required
-def load_calculations(current_user_uid):
+@firebase_token_required 
+def load_calculations(current_user_uid): 
     if not db:
         return jsonify({'message': 'Database not configured, cannot load calculations.'}), 500
     try:
         user_calculations_ref = db.collection('users').document(current_user_uid).collection('calculations')
         docs = user_calculations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
-
+        
         calculations = []
         for doc in docs:
             calc_data = doc.to_dict()
             calc_data['id'] = doc.id
             calculations.append(calc_data)
-
+        
         return jsonify(calculations), 200
     except Exception as e:
         return jsonify({'message': f'Error loading calculations: {str(e)}'}), 500
 
 @app.route('/delete_calculation/<string:calc_id>', methods=['DELETE'])
-@firebase_token_required
-def delete_calculation(current_user_uid, calc_id):
+@firebase_token_required 
+def delete_calculation(current_user_uid, calc_id): 
     if not db:
         return jsonify({'message': 'Database not configured, cannot delete calculation.'}), 500
     if not calc_id:
         return jsonify({'message': 'Calculation ID is required'}), 400
-
+    
     try:
         doc_ref = db.collection('users').document(current_user_uid).collection('calculations').document(calc_id)
         doc_ref.delete()
@@ -482,4 +303,3 @@ def delete_calculation(current_user_uid, calc_id):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-
