@@ -16,7 +16,8 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 import google.generativeai as genai
-from sec_api import ExtractorApi, QueryApi
+from sec_api import QueryApi, RenderApi
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -74,89 +75,118 @@ def firebase_token_required(f):
 
 # --- NEW AI & SEC ANALYSIS FUNCTIONS ---
 
-def get_filing_section_text(ticker: str, form_type: str = "10-K") -> str:
-    """
-    Fetches the MD&A section from the latest filing for a given ticker.
-    MD&A is Item 7 in a 10-K and Item 2 in a 10-Q.
-    """
-    api_key = os.getenv("SEC_API_KEY")
-    if not api_key:
-        raise ValueError("SEC_API_KEY not found in environment variables.")
-
-    try:
-        # Use QueryApi to find the latest filing URL
-        query_api = QueryApi(api_key=api_key)
-        query = {
-            "query": {"query_string": {"query": f"ticker:{ticker} AND formType:\"{form_type}\""}},
-            "from": "0",
-            "size": "1",
-            "sort": [{"filedAt": {"order": "desc"}}]
-        }
-        filings = query_api.get_filings(query)
-
-        if not filings.get('filings'):
-            raise FileNotFoundError(f"No {form_type} filings found for ticker {ticker}.")
-
-        latest_filing_url = filings['filings'][0]['linkToFilingDetails']
-        
-        # Use ExtractorApi to get the section text
-        extractor_api = ExtractorApi(api_key=api_key)
-        section_item = "7" if form_type == "10-K" else "2"
-        section_text = extractor_api.get_section(
-            filing_url=latest_filing_url,
-            section=section_item,
-            return_type="text"
-        )
-        return section_text
-    except Exception as e:
-        print(f"Error fetching SEC data: {e}")
-        raise
 
 
-def discover_and_extract_kpis_with_ai(filing_text: str, ticker: str) -> str:
-    """
-    Uses Gemini to first DISCOVER relevant KPIs for any company and then extract them.
-    """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY not found in environment variables.")
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-pro-latest')
 
-    prompt = f"""
-    You are a world-class financial analyst AI. Your task is to analyze the following 'Management’s Discussion and Analysis' section from a company's filing for the ticker '{ticker}'.
 
-    Your analysis must proceed in two stages:
-    1.  **IDENTIFY:** First, read the text to understand the company's business model. Identify the 5-7 most critical Key Performance Indicators (KPIs) that truly define its performance. Focus on what makes this business unique.
-    2.  **EXTRACT:** Second, for each KPI you've identified, extract its most recent numerical value, its unit (e.g., 'USD Billions', 'Percent', 'Units'), and a brief, one-sentence context explaining the metric.
+# --- NEW HYBRID KPI EXTRACTION FUNCTIONS ---
 
-    Present your final output ONLY as a single, valid JSON object. Do not include any text before or after the JSON.
-    The JSON object must have the following structure:
-    {{
-      "ticker": "{ticker}",
-      "period": "Fiscal Year/Quarter Ending [Date]",
-      "discovered_kpis": {{
-        "Human-Readable KPI Name 1": {{
-          "value": "[number or string]",
-          "unit": "e.g., USD Billions",
-          "context": "A brief explanation of this KPI."
-        }}
-      }}
-    }}
+def extract_financials_from_tables(soup):
+    extracted_data = {}
+    tables = soup.find_all('table')
 
-    Now, perform this analysis on the following filing text:
-    ---
-    {filing_text[:35000]}
-    ---
-    """
-    try:
-        response = model.generate_content(prompt)
-        json_response_text = response.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(json_response_text) # Return as a Python dict
-    except Exception as e:
-        print(f"Error interacting with Gemini API: {e}")
-        raise
+    # Keywords to identify financial statements
+    statement_keywords = {
+        'income_statement': ['Consolidated Statements of Operations', 'Consolidated Statements of Income'],
+        'balance_sheet': ['Consolidated Balance Sheets'],
+        'cash_flow': ['Consolidated Statements of Cash Flows']
+    }
+
+    segment_keywords = ['segment', 'geographic', 'product', 'division', 'region']
+    segment_data = {}
+
+    for table in tables:
+        table_text = table.get_text().lower()
+        # Check for income statement
+        if any(keyword.lower() in table_text for keyword in statement_keywords['income_statement']):
+            try:
+                df = pd.read_html(str(table))[0]
+                df = df.dropna(axis=1, how='all')
+                df.set_index(df.columns[0], inplace=True)
+                if 'Total Revenue' in df.index:
+                    extracted_data['revenue'] = df.loc['Total Revenue'].iloc[-1]
+                if 'Net Income' in df.index:
+                    extracted_data['net_income'] = df.loc['Net Income'].iloc[-1]
+                if 'Earnings Per Share, Basic' in df.index:
+                    extracted_data['eps'] = df.loc['Earnings Per Share, Basic'].iloc[-1]
+            except Exception as e:
+                print(f"Could not parse income statement table: {e}")
+
+        # Check for segment tables
+        if any(seg_kw in table_text for seg_kw in segment_keywords):
+            try:
+                df = pd.read_html(str(table))[0]
+                df = df.dropna(axis=1, how='all')
+                # Try to find segment columns/rows
+                # Heuristic: if first column contains segment names, and columns contain metrics
+                if df.shape[1] > 2:
+                    # Assume first column is segment name
+                    seg_col = df.columns[0]
+                    for metric in ['Revenue', 'Net Income', 'Operating Income', 'Earnings']:
+                        for col in df.columns:
+                            if metric.lower() in str(col).lower():
+                                for idx, row in df.iterrows():
+                                    seg_name = str(row[seg_col])
+                                    if seg_name and seg_name.lower() not in ['total', 'consolidated']:
+                                        key = f"{metric.lower().replace(' ', '_')}_by_segment"
+                                        if key not in segment_data:
+                                            segment_data[key] = {}
+                                        segment_data[key][seg_name] = row[col]
+            except Exception as e:
+                print(f"Could not parse segment table: {e}")
+
+    extracted_data.update(segment_data)
+    return extracted_data
+# Utility to extract non-financial KPIs from text with minimal AI calls
+def extract_nonfinancial_kpis(text, kpis_to_find):
+    extracted_kpis = {}
+    # Use regex to find sentences with KPI keywords
+    import re
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    for kpi in kpis_to_find:
+        found = False
+        for sentence in sentences:
+            if kpi.lower() in sentence.lower():
+                # Try to extract a number or percentage from the sentence
+                match = re.search(r'([\d,.]+%?)', sentence)
+                if match:
+                    extracted_kpis[kpi] = match.group(1)
+                    found = True
+                    break
+        if not found:
+            extracted_kpis[kpi] = None
+    return extracted_kpis
+
+def extract_kpis_with_targeted_ai(text, kpis_to_find):
+    extracted_kpis = {}
+    # A simple way to find sentences. A more robust solution would use NLTK or spaCy.
+    sentences = text.split('.')
+
+    for kpi in kpis_to_find:
+        for sentence in sentences:
+            if kpi.lower() in sentence.lower():
+                try:
+                    # Once we find a relevant sentence, we use the AI to extract the number.
+                    api_key = os.environ.get("GEMINI_API_KEY")
+                    if not api_key:
+                        raise ValueError("GEMINI_API_KEY not found in environment variables.")
+
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel('gemini-1.0-pro')
+
+                    prompt = f"""Extract the value for '{kpi}' from the following sentence. 
+                    Return only the numerical value or a short string. 
+                    Sentence: {sentence}"""
+                    
+                    response = model.generate_content(prompt)
+                    extracted_kpis[kpi] = response.text.strip()
+                    # Break after finding the first occurrence to avoid multiple values
+                    break 
+                except Exception as e:
+                    print(f"Error during targeted AI extraction for '{kpi}': {e}")
+    
+    return extracted_kpis
 
 @app.route('/analyze_filing', methods=['GET'])
 @limiter.limit("5 per hour") # Stricter limit for this expensive endpoint
@@ -171,22 +201,50 @@ def analyze_filing(current_user_uid):
         return jsonify({'error': 'Invalid form_type. Must be "10-K" or "10-Q".'}), 400
 
     try:
-        # 1. Fetch filing text
-        filing_text = get_filing_section_text(ticker_symbol, form_type)
-        if not filing_text:
-            return jsonify({'error': f'Could not retrieve filing text for {ticker_symbol}.'}), 404
+        api_key = os.environ.get("SEC_API_KEY")
+        if not api_key:
+            raise ValueError("SEC_API_KEY not found in environment variables.")
 
-        # 2. Analyze with AI
-        ai_analysis_data = discover_and_extract_kpis_with_ai(filing_text, ticker_symbol)
+        # 1. Get filing URL
+        query_api = QueryApi(api_key=api_key)
+        query = {
+            "query": {"query_string": {"query": f"ticker:{ticker_symbol} AND formType:\"{form_type}\""}},
+            "from": "0",
+            "size": "1",
+            "sort": [{"filedAt": {"order": "desc"}}]
+        }
+        filings = query_api.get_filings(query)
+        if not filings.get('filings'):
+            raise FileNotFoundError(f"No {form_type} filings found for ticker {ticker_symbol}.")
+        
+        filing_url = filings['filings'][0]['linkToFilingDetails']
 
-        return jsonify(ai_analysis_data), 200
+        # 2. Get filing HTML
+        render_api = RenderApi(api_key=api_key)
+        filing_html = render_api.get_filing(filing_url)
+        soup = BeautifulSoup(filing_html, 'lxml')
+        
+        # 3. Extract data
+        financial_data = extract_financials_from_tables(soup)
+        
+
+        # For non-financial KPIs, use keyword/regex extraction first
+        filing_text = soup.get_text()
+        other_kpis = extract_nonfinancial_kpis(
+            filing_text,
+            kpis_to_find=["users", "engagement", "penetration to premium"]
+        )
+
+        # 4. Combine and return results
+        all_data = {**financial_data, **other_kpis}
+        return jsonify(all_data), 200
 
     except FileNotFoundError as e:
         return jsonify({'error': str(e)}), 404
     except ValueError as e: # Catches API key errors
         return jsonify({'error': str(e)}), 500
     except Exception as e:
-        return jsonify({'error': f'An unexpected error occurred during AI analysis: {str(e)}'}), 500
+        return jsonify({'error': f'An unexpected error occurred during analysis: {str(e)}'}), 500
 
 
 # --- EXISTING ENDPOINTS ---
