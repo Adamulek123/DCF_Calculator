@@ -173,13 +173,12 @@ def extract_kpis_with_targeted_ai(text, kpis_to_find):
                         raise ValueError("GEMINI_API_KEY not found in environment variables.")
 
                     genai.configure(api_key=api_key)
-                    model = genai.GenerativeModel('gemini-1.0-pro')
-
-                    prompt = f"""Extract the value for '{kpi}' from the following sentence. 
-                    Return only the numerical value or a short string. 
-                    Sentence: {sentence}"""
-                    
-                    response = model.generate_content(prompt)
+                    client = genai.Client()
+                    prompt = f"Extract the value for '{kpi}' from the following sentence. Return only the numerical value or a short string. Sentence: {sentence}"
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=prompt
+                    )
                     extracted_kpis[kpi] = response.text.strip()
                     # Break after finding the first occurrence to avoid multiple values
                     break 
