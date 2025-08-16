@@ -16,7 +16,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 import google.generativeai as genai
-from sec_api import ExtractorApi
+from sec_api import ExtractorApi, QueryApi
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -84,14 +84,24 @@ def get_filing_section_text(ticker: str, form_type: str = "10-K") -> str:
         raise ValueError("SEC_API_KEY not found in environment variables.")
 
     try:
-        extractor_api = ExtractorApi(api_key=api_key)
-        filings = extractor_api.get_filings(ticker=ticker, form_type=form_type, limit=1)
+        # Use QueryApi to find the latest filing URL
+        query_api = QueryApi(api_key=api_key)
+        query = {
+            "query": {"query_string": {"query": f"ticker:{ticker} AND formType:\"{form_type}\""}},
+            "from": "0",
+            "size": "1",
+            "sort": [{"filedAt": {"order": "desc"}}]
+        }
+        filings = query_api.get_filings(query)
+
         if not filings.get('filings'):
             raise FileNotFoundError(f"No {form_type} filings found for ticker {ticker}.")
 
         latest_filing_url = filings['filings'][0]['linkToFilingDetails']
+        
+        # Use ExtractorApi to get the section text
+        extractor_api = ExtractorApi(api_key=api_key)
         section_item = "item_7" if form_type == "10-K" else "item_2"
-
         section_text = extractor_api.get_section(
             filing_url=latest_filing_url,
             section=section_item,
@@ -414,3 +424,4 @@ def delete_calculation(current_user_uid, calc_id):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
