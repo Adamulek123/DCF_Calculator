@@ -101,7 +101,7 @@ def get_filing_section_text(ticker: str, form_type: str = "10-K") -> str:
         
         # Use ExtractorApi to get the section text
         extractor_api = ExtractorApi(api_key=api_key)
-        section_item = "item_7" if form_type == "10-K" else "item_2"
+        section_item = "7" if form_type == "10-K" else "2"
         section_text = extractor_api.get_section(
             filing_url=latest_filing_url,
             section=section_item,
@@ -111,6 +111,7 @@ def get_filing_section_text(ticker: str, form_type: str = "10-K") -> str:
     except Exception as e:
         print(f"Error fetching SEC data: {e}")
         raise
+
 
 def discover_and_extract_kpis_with_ai(filing_text: str, ticker: str) -> str:
     """
