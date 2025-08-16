@@ -15,21 +15,16 @@ import base64
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
-# --- NEW IMPORTS for AI Analysis ---
 import google.generativeai as genai
 from sec_api import ExtractorApi
 from dotenv import load_dotenv
 
-# Load environment variables from a .env file if it exists (for local development)
 load_dotenv()
 
-#To do list
-#Expand the Data
-#Better Visualizations
-#Stock Screener
-
 app = Flask(__name__)
-CORS(app)
+
+# --- FIX: Configure CORS to allow requests from your specific frontend origin ---
+CORS(app, origins=["https://adamulek123.github.io"])
 
 
 limiter = Limiter(
