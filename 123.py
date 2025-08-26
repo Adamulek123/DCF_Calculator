@@ -144,62 +144,13 @@ def get_trailing_metrics(current_user_uid):
     except Exception as e:
         return jsonify({'error': f'An unexpected error occurred while fetching or calculating data for {ticker_symbol}. Please try again later. Details: {str(e)}'}), 500
 
-def clean_data(data_list):
-    #convert NaN to None
-    return [item if pd.notna(item) else None for item in data_list]
 
-def process_financial_data(income_stmt, cashflow_stmt, dividends, period_type):
-    data = {}
-    date_format = '%Y' if period_type == 'annual' else '%Y-%m-%d'
-    
-    if 'Total Revenue' in income_stmt.columns:
-        data['Revenue'] = {
-            'labels': income_stmt.index.strftime(date_format).tolist(),
-            'data': clean_data(income_stmt['Total Revenue'].tolist()),
-            'type': 'bar', 'backgroundColor': 'rgba(40, 167, 69, 0.7)', 'borderColor': 'rgba(40, 167, 69, 1)'
-        }
-    
-    if 'Free Cash Flow' in cashflow_stmt.columns:
-        data['Free Cash Flow'] = {
-            'labels': cashflow_stmt.index.strftime(date_format).tolist(),
-            'data': clean_data(cashflow_stmt['Free Cash Flow'].tolist()),
-            'type': 'bar', 'backgroundColor': 'rgba(102, 16, 242, 0.7)', 'borderColor': 'rgba(102, 16, 242, 1)'
-        }
 
-    if 'Basic EPS' in income_stmt.columns:
-        data['EPS'] = {
-            'labels': income_stmt.index.strftime(date_format).tolist(),
-            'data': clean_data(income_stmt['Basic EPS'].tolist()),
-            'type': 'line', 'backgroundColor': 'rgba(253, 126, 20, 0.1)', 'borderColor': 'rgba(253, 126, 20, 1)'
-        }
-
-    if 'Net Income' in income_stmt.columns:
-        data['Net Income'] = {
-            'labels': income_stmt.index.strftime(date_format).tolist(),
-            'data': clean_data(income_stmt['Net Income'].tolist()),
-            'type': 'bar', 'backgroundColor': 'rgba(23, 162, 184, 0.7)', 'borderColor': 'rgba(23, 162, 184, 1)'
-        }
-
-    if 'EBITDA' in income_stmt.columns:
-        data['EBITDA'] = {
-            'labels': income_stmt.index.strftime(date_format).tolist(),
-            'data': clean_data(income_stmt['EBITDA'].tolist()),
-            'type': 'bar', 'backgroundColor': 'rgba(255, 193, 7, 0.7)', 'borderColor': 'rgba(255, 193, 7, 1)'
-        }
-
-    if not dividends.empty:
-        data['Dividends'] = {
-            'labels': dividends.index.strftime(date_format).tolist(),
-            'data': clean_data(dividends.round(2).tolist()),
-            'type': 'bar', 'backgroundColor': 'rgba(108, 117, 125, 0.7)', 'borderColor': 'rgba(108, 117, 125, 1)'
-        }
-        
-    return data
 
 @app.route('/get_insights_data', methods=['GET'])
 @limiter.limit("30 per minute")
 @firebase_token_required 
-def get_insights_data(): 
+def get_insights_data(current_user_uid): 
     ticker_symbol = request.args.get('ticker')
     if not ticker_symbol:
         return jsonify({'error': 'Ticker symbol is required'}), 400
