@@ -145,12 +145,101 @@ def get_trailing_metrics(current_user_uid):
         return jsonify({'error': f'An unexpected error occurred while fetching or calculating data for {ticker_symbol}. Please try again later. Details: {str(e)}'}), 500
 
 
+def calculate_and_process_financials(raw_results, ticker):
+    """
+    Processes raw financial data to calculate Q4 and structure for Firestore.
+    """
+    data_by_year = {}
+    
+    # Group data by year and period
+    for item in raw_results:
+        filing_date = item.get("filing_date", "")
+        parts = filing_date.split()
+        if len(parts) == 2:
+            period, year = parts
+            if year not in data_by_year:
+                data_by_year[year] = {}
+            # Ensure we don't overwrite with empty data
+            if item.get("data"):
+                data_by_year[year][period] = item["data"]
+
+    processed_results = []
+    all_metrics = set()
+
+    # Get a set of all possible metric keys
+    for year in data_by_year:
+        for period in data_by_year[year]:
+            all_metrics.update(data_by_year[year][period].keys())
+
+    # Calculate Q4 if possible
+    for year, periods in data_by_year.items():
+        if all(p in periods for p in ['Q1', 'Q2', 'Q3', 'FY']):
+            q4_data = {}
+            q1_data = periods['Q1']
+            q2_data = periods['Q2']
+            q3_data = periods['Q3']
+            fy_data = periods['FY']
+
+            for metric in all_metrics:
+                try:
+                    # Convert to float for calculation, default to 0 if missing
+                    fy_val = float(fy_data.get(metric, 0))
+                    q1_val = float(q1_data.get(metric, 0))
+                    q2_val = float(q2_data.get(metric, 0))
+                    q3_val = float(q3_data.get(metric, 0))
+                    
+                    # UPDATED LOGIC STARTS HERE
+                    # **FIX**: Normalize the metric name to remove hidden characters before checking
+                    normalized_metric = ' '.join(str(metric).replace('\n', ' ').replace('\xa0', ' ').split())
+
+                    # Define keywords for non-cumulative (balance sheet) items.
+                    balance_sheet_keywords = [
+                        'Assets', 'Liabilities', 'Equity', 'Goodwill', 'Cash', 
+                        'Debt', 'Property', 'Retained Earnings', 'Stockholders'
+                    ]
+
+                    # Handle metrics that are not cumulative (like per-share data or balance sheet items)
+                    if 'per Share' in normalized_metric or any(keyword in normalized_metric for keyword in balance_sheet_keywords):
+                        # For these metrics, the Q4 value is the same as the final FY value.
+                        q4_val = fy_val
+                    else:
+                        # For cumulative metrics (like Revenue, Net Income), we derive Q4.
+                        q1_q3_sum = q1_val + q2_val + q3_val
+                        
+                        # Heuristic to handle inconsistent FY reporting:
+                        # If the FY value is less than the sum of the first three quarters,
+                        # it's likely the reported 'FY' value is actually just the Q4 value.
+                        if fy_val < q1_q3_sum:
+                            q4_val = fy_val
+                        else:
+                        # Otherwise, calculate Q4 by subtracting the first three quarters from the FY value.
+                            q4_val = fy_val - q1_q3_sum
+                    # UPDATED LOGIC ENDS HERE
+                    
+                    q4_data[metric] = str(q4_val)
+                except (ValueError, TypeError):
+                    # If conversion fails, skip this metric for Q4
+                    continue
+            
+            if q4_data:
+                periods['Q4'] = q4_data
+
+    # Reconstruct the list in the desired format
+    for year in sorted(data_by_year.keys()):
+        for period in sorted(data_by_year[year].keys(), key=lambda p: ('Q' in p, p)): # Sorts Q1, Q2, Q3, Q4, FY
+            processed_results.append({
+                "ticker": ticker,
+                "filing_date": f"{period} {year}",
+                "data": data_by_year[year][period]
+            })
+            
+    return processed_results
 
 
 @app.route('/get_insights_data', methods=['GET'])
 @limiter.limit("30 per minute")
 @firebase_token_required 
-def get_insights_data(current_user_uid): 
+def get_insights_data(): 
     ticker_symbol = request.args.get('ticker')
     if not ticker_symbol:
         return jsonify({'error': 'Ticker symbol is required'}), 400
@@ -164,45 +253,46 @@ def get_insights_data(current_user_uid):
         except Exception as e:
             return jsonify({'error': f"Invalid ticker '{ticker_symbol}': {str(e)}"}), 400
         
-        fin = get_financials_from_firestore(ticker_symbol)
-        if fin != None:
-            return jsonify(fin)
+        # Check Firestore first
+        firestore_data = get_financials_from_firestore(ticker_symbol)
+        if firestore_data:
+            # Convert dict back to list of dicts
+            data_list = [v for k, v in firestore_data.items()]
+            return jsonify(data_list)
         else:
-            # Data not found
-            results = extract_core_financials_from_edgar(ticker_symbol)
-            for result in results:
-                save_financials_to_firestore(
-                    ticker=result.get("ticker", ticker_symbol),
-                    filing_date=result.get("filing_date", ""),
-                    kpis=result.get("data", {})
-                )
-            return jsonify(results)
+            # If not in Firestore, fetch from Edgar
+            raw_results = extract_core_financials_from_edgar(ticker_symbol)
+            if not raw_results:
+                 return jsonify({'error': f'Could not extract financial data for {ticker_symbol} from EDGAR.'}), 404
+
+            # Process data to calculate Q4
+            processed_data = calculate_and_process_financials(raw_results, ticker_symbol)
+
+            # Save the processed data to Firestore
+            save_financials_to_firestore(ticker_symbol, processed_data)
+            
+            return jsonify(processed_data)
 
     except Exception as e:
         return jsonify({'error': f'An unexpected error occurred while fetching insights data for {ticker_symbol}. Details: {str(e)}'}), 500
 
-def save_financials_to_firestore(ticker, filing_date, kpis):
+
+def save_financials_to_firestore(ticker, processed_data):
     if not db:
         print("Firestore not initialized. Skipping save.")
         return
     try:
-        
-        field_key = f'{filing_date}'
         doc_ref = db.collection('corefillings').document(ticker)
+        
+        # Structure data with filing_date as the key
+        data_to_save = {item['filing_date']: item for item in processed_data}
 
-        data_to_save = {
-            'ticker': ticker,
-            'filing_date': filing_date,
-            'data': kpis
-        }
+        doc_ref.set(data_to_save, merge=True)
 
-        doc_ref.set({
-            field_key: data_to_save
-        }, merge=True)
-
-        print(f"Financials saved to Firestore in document '{ticker}' with field key '{field_key}'")
+        print(f"Financials saved to Firestore in document '{ticker}'")
     except Exception as e:
         print(f"Error saving financials to Firestore: {e}")
+
 
 def find_revenue_line(inc, period):
     revenue_candidates = [
@@ -300,35 +390,15 @@ def extract_core_financials_from_edgar(ticker):
 
         results = []
         
-
         for period in period_cols:
-            if str(period).startswith('FY') and len(str(period)) >= 6:
-                year = str(period)[2:].lstrip()
-                period_label = f"Q4 {year}"
-                period_label = ' '.join(period_label.split())
+            # Standardize period label (e.g., 'Q1 2023', 'FY 2023')
+            period_str = str(period).strip()
+            if period_str.startswith('FY'):
+                year = period_str[2:].strip()
+                period_label = f"FY {year}"
             else:
-                period_label = ' '.join(str(period).split())
+                period_label = ' '.join(period_str.split())
 
-            # CHeck if already saved
-
-
-            field_key = f'{period_label}'
-            skip_filing = False
-            if db is not None:
-                doc_ref = db.collection('corefillings').document(ticker)
-                doc = doc_ref.get()
-                if doc.exists:
-                    doc_dict = doc.to_dict()
-                    if field_key in doc_dict:
-                        print(f"[SKIP] Filing for {ticker} {field_key} already exists in Firestore. Skipping.")
-                        skip_filing = True
-            if skip_filing:
-                continue
-
-
-
-
-            
             core_kpis = {}
 
             # Balance Sheet
