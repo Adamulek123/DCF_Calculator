@@ -239,7 +239,7 @@ def calculate_and_process_financials(raw_results, ticker):
 @app.route('/get_insights_data', methods=['GET'])
 @limiter.limit("30 per minute")
 @firebase_token_required 
-def get_insights_data(): 
+def get_insights_data(current_user_uid): 
     ticker_symbol = request.args.get('ticker')
     if not ticker_symbol:
         return jsonify({'error': 'Ticker symbol is required'}), 400
