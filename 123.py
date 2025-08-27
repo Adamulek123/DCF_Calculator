@@ -147,11 +147,12 @@ def get_trailing_metrics(current_user_uid):
 
 def calculate_and_process_financials(raw_results, ticker):
     """
-    Processes raw financial data to normalize quarterly values and accurately calculate Q4.
+    Processes raw financial data to normalize quarterly values and accurately calculate Q4,
+    without corrupting the data during processing.
     """
     data_by_year = {}
     
-    # Group data by year and period
+    # Group raw data by year and period (Q1, Q2, Q3, FY)
     for item in raw_results:
         filing_date = item.get("filing_date", "")
         parts = filing_date.split()
@@ -162,83 +163,91 @@ def calculate_and_process_financials(raw_results, ticker):
             if item.get("data"):
                 data_by_year[year][period] = item["data"]
 
-    processed_results = []
-    all_metrics = set()
-
-    for year in data_by_year:
-        for period in data_by_year[year]:
-            all_metrics.update(data_by_year[year][period].keys())
-
-    # Calculate Q4 if possible and normalize quarterly data
-    for year, periods in data_by_year.items():
-        if all(p in periods for p in ['Q1', 'Q2', 'Q3', 'FY']):
-            q4_data = {}
-            q1_data = periods.get('Q1', {})
-            q2_data = periods.get('Q2', {})
-            q3_data = periods.get('Q3', {})
-            fy_data = periods.get('FY', {})
-
-            for metric in all_metrics:
-                try:
-                    # FIX: Handle balance sheet items separately as they are point-in-time values
-                    balance_sheet_keywords = [
-                        'Assets', 'Liabilities', 'Equity', 'Goodwill', 'Cash', 
-                        'Debt', 'Property', 'Retained Earnings', 'Stockholders'
-                    ]
-                    normalized_metric = ' '.join(str(metric).replace('\n', ' ').replace('\xa0', ' ').split())
-
-                    if 'per Share' in normalized_metric or any(keyword in normalized_metric for keyword in balance_sheet_keywords):
-                        # For balance sheet/per-share metrics, Q4 value is the same as the final FY value.
-                        if metric in fy_data:
-                            q4_data[metric] = fy_data[metric]
-                        continue # Move to the next metric
-
-                    # FIX: Convert cumulative quarterly data to discrete data
-                    q1_val = float(q1_data.get(metric, 0))
-                    q2_val = float(q2_data.get(metric, 0))
-                    q3_val = float(q3_data.get(metric, 0))
-                    fy_val = float(fy_data.get(metric, 0))
-
-                    # Check if quarterlies are cumulative (e.g., Q3 > Q2 > Q1)
-                    # This is a strong indicator, though not foolproof.
-                    if q3_val > q2_val > q1_val and q1_val > 0:
-                        # Convert to discrete values
-                        discrete_q3 = q3_val - q2_val
-                        discrete_q2 = q2_val - q1_val
-                        discrete_q1 = q1_val
-                    else:
-                        # Assume they are already discrete
-                        discrete_q1 = q1_val
-                        discrete_q2 = q2_val
-                        discrete_q3 = q3_val
-
-                    # FIX: Use a direct calculation for Q4 without the flawed heuristic
-                    q1_q3_sum_discrete = discrete_q1 + discrete_q2 + discrete_q3
-                    q4_val = fy_val - q1_q3_sum_discrete
-                    
-                    q4_data[metric] = str(q4_val)
-
-                    # Also update the original periods with discrete values for consistency
-                    if metric in periods['Q1']: periods['Q1'][metric] = str(discrete_q1)
-                    if metric in periods['Q2']: periods['Q2'][metric] = str(discrete_q2)
-                    if metric in periods['Q3']: periods['Q3'][metric] = str(discrete_q3)
-
-                except (ValueError, TypeError):
-                    continue
-            
-            if q4_data:
-                periods['Q4'] = q4_data
-
-    # Reconstruct the list in the desired format
+    final_results = []
+    
+    # RESTRUCTURED: Loop through each year individually to process it
     for year in sorted(data_by_year.keys()):
-        for period in sorted(data_by_year[year].keys(), key=lambda p: ('Q' in p, p)):
-            processed_results.append({
-                "ticker": ticker,
-                "filing_date": f"{period} {year}",
-                "data": data_by_year[year][period]
-            })
-            
-    return processed_results
+        periods = data_by_year[year]
+
+        # Skip year if we don't have the necessary data to calculate Q4
+        if not all(p in periods for p in ['Q1', 'Q2', 'Q3', 'FY']):
+            continue
+
+        q1_data = periods.get('Q1', {})
+        q2_data = periods.get('Q2', {})
+        q3_data = periods.get('Q3', {})
+        fy_data = periods.get('FY', {})
+
+        # NEW: Create clean dictionaries to store the processed (discrete) values for this year
+        processed_q1 = {}
+        processed_q2 = {}
+        processed_q3 = {}
+        processed_q4 = {}
+
+        # Get a set of all possible metrics for this year
+        all_metrics = set(q1_data.keys()) | set(q2_data.keys()) | set(q3_data.keys()) | set(fy_data.keys())
+
+        for metric in all_metrics:
+            try:
+                # Handle balance sheet items separately as they are point-in-time values
+                balance_sheet_keywords = [
+                    'Assets', 'Liabilities', 'Equity', 'Goodwill', 'Cash', 
+                    'Debt', 'Property', 'Retained Earnings', 'Stockholders', 'Shares Outstanding'
+                ]
+                normalized_metric = ' '.join(str(metric).replace('\n', ' ').replace('\xa0', ' ').split())
+
+                if 'per Share' in normalized_metric or any(keyword in normalized_metric for keyword in balance_sheet_keywords):
+                    # For these, the quarterly value is just its reported value, and Q4's value is the FY value.
+                    processed_q1[metric] = q1_data.get(metric)
+                    processed_q2[metric] = q2_data.get(metric)
+                    processed_q3[metric] = q3_data.get(metric)
+                    processed_q4[metric] = fy_data.get(metric)
+                    continue # Move to the next metric
+
+                # --- Cumulative-to-Discrete Conversion for Income/Cash Flow items ---
+                q1_val = float(q1_data.get(metric, 0))
+                q2_val = float(q2_data.get(metric, 0))
+                q3_val = float(q3_data.get(metric, 0))
+                fy_val = float(fy_data.get(metric, 0))
+                
+                discrete_q1 = q1_val
+                discrete_q2 = q2_val
+                discrete_q3 = q3_val
+
+                # FIX: Use a much smarter check for cumulative data.
+                # A good heuristic is if Q2 is close to doubling Q1, and Q3 is close to tripling Q1.
+                # This is more robust than a simple `q3 > q2 > q1` check.
+                # We check if Q3 is significantly larger than the sum of Q1 and Q2.
+                is_cumulative = (q3_val > (q1_val + q2_val) * 0.9 and q2_val > q1_val and q1_val > 0)
+
+                if is_cumulative:
+                    # If cumulative, convert to discrete values
+                    discrete_q3 = q3_val - q2_val
+                    discrete_q2 = q2_val - q1_val
+                
+                processed_q1[metric] = str(discrete_q1)
+                processed_q2[metric] = str(discrete_q2)
+                processed_q3[metric] = str(discrete_q3)
+                
+                # FIX: The Q4 calculation is now direct and reliable
+                q1_q3_sum_discrete = discrete_q1 + discrete_q2 + discrete_q3
+                q4_val = fy_val - q1_q3_sum_discrete
+                processed_q4[metric] = str(q4_val)
+
+            except (ValueError, TypeError):
+                # If any value can't be converted to a float, skip it
+                continue
+        
+        # NEW: Add the fully processed periods to our final results list
+        final_results.append({"ticker": ticker, "filing_date": f"Q1 {year}", "data": processed_q1})
+        final_results.append({"ticker": ticker, "filing_date": f"Q2 {year}", "data": processed_q2})
+        final_results.append({"ticker": ticker, "filing_date": f"Q3 {year}", "data": processed_q3})
+        final_results.append({"ticker": ticker, "filing_date": f"Q4 {year}", "data": processed_q4})
+        final_results.append({"ticker": ticker, "filing_date": f"FY {year}", "data": fy_data})
+
+    # Sort the final results to ensure they are in chronological order for charting
+    final_results.sort(key=lambda x: (x['filing_date'].split()[1], x['filing_date'].split()[0]))
+    return final_results
 
 
 @app.route('/get_insights_data', methods=['GET'])
