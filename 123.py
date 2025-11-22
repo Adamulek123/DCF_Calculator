@@ -144,216 +144,46 @@ def get_trailing_metrics(current_user_uid):
     except Exception as e:
         return jsonify({'error': f'An unexpected error occurred while fetching or calculating data for {ticker_symbol}. Please try again later. Details: {str(e)}'}), 500
 
-
-def calculate_and_process_financials(raw_results, ticker):
-    """
-    Processes raw financial data to normalize quarterly values and accurately calculate Q4,
-    without corrupting the data during processing.
-    """
-    data_by_year = {}
-    
-    # Group raw data by year and period (Q1, Q2, Q3, FY)
-    for item in raw_results:
-        filing_date = item.get("filing_date", "")
-        parts = filing_date.split()
-        if len(parts) == 2:
-            period, year = parts
-            if year not in data_by_year:
-                data_by_year[year] = {}
-            if item.get("data"):
-                data_by_year[year][period] = item["data"]
-
-    final_results = []
-    
-    # RESTRUCTURED: Loop through each year individually to process it
-    for year in sorted(data_by_year.keys()):
-        periods = data_by_year[year]
-
-        # Skip year if we don't have the necessary data to calculate Q4
-        if not all(p in periods for p in ['Q1', 'Q2', 'Q3', 'FY']):
-            continue
-
-        q1_data = periods.get('Q1', {})
-        q2_data = periods.get('Q2', {})
-        q3_data = periods.get('Q3', {})
-        fy_data = periods.get('FY', {})
-
-        # NEW: Create clean dictionaries to store the processed (discrete) values for this year
-        processed_q1 = {}
-        processed_q2 = {}
-        processed_q3 = {}
-        processed_q4 = {}
-
-        # Get a set of all possible metrics for this year
-        all_metrics = set(q1_data.keys()) | set(q2_data.keys()) | set(q3_data.keys()) | set(fy_data.keys())
-
-        for metric in all_metrics:
-            try:
-                # Handle balance sheet items separately as they are point-in-time values
-                balance_sheet_keywords = [
-                    'Assets', 'Liabilities', 'Equity', 'Goodwill', 'Cash', 
-                    'Debt', 'Property', 'Retained Earnings', 'Stockholders', 'Shares Outstanding'
-                ]
-                normalized_metric = ' '.join(str(metric).replace('\n', ' ').replace('\xa0', ' ').split())
-
-                if 'per Share' in normalized_metric or any(keyword in normalized_metric for keyword in balance_sheet_keywords):
-                    # For these, the quarterly value is just its reported value, and Q4's value is the FY value.
-                    processed_q1[metric] = q1_data.get(metric)
-                    processed_q2[metric] = q2_data.get(metric)
-                    processed_q3[metric] = q3_data.get(metric)
-                    processed_q4[metric] = fy_data.get(metric)
-                    continue # Move to the next metric
-
-                # --- Cumulative-to-Discrete Conversion for Income/Cash Flow items ---
-                q1_val = float(q1_data.get(metric, 0))
-                q2_val = float(q2_data.get(metric, 0))
-                q3_val = float(q3_data.get(metric, 0))
-                fy_val = float(fy_data.get(metric, 0))
-                
-                discrete_q1 = q1_val
-                discrete_q2 = q2_val
-                discrete_q3 = q3_val
-
-                # FIX: Use a much smarter check for cumulative data.
-                # A good heuristic is if Q2 is close to doubling Q1, and Q3 is close to tripling Q1.
-                # This is more robust than a simple `q3 > q2 > q1` check.
-                # We check if Q3 is significantly larger than the sum of Q1 and Q2.
-                is_cumulative = (q3_val > (q1_val + q2_val) * 0.9 and q2_val > q1_val and q1_val > 0)
-
-                if is_cumulative:
-                    # If cumulative, convert to discrete values
-                    discrete_q3 = q3_val - q2_val
-                    discrete_q2 = q2_val - q1_val
-                
-                processed_q1[metric] = str(discrete_q1)
-                processed_q2[metric] = str(discrete_q2)
-                processed_q3[metric] = str(discrete_q3)
-                
-                # FIX: The Q4 calculation is now direct and reliable
-                q1_q3_sum_discrete = discrete_q1 + discrete_q2 + discrete_q3
-                q4_val = fy_val - q1_q3_sum_discrete
-                processed_q4[metric] = str(q4_val)
-
-            except (ValueError, TypeError):
-                # If any value can't be converted to a float, skip it
-                continue
-        
-        # NEW: Add the fully processed periods to our final results list
-        final_results.append({"ticker": ticker, "filing_date": f"Q1 {year}", "data": processed_q1})
-        final_results.append({"ticker": ticker, "filing_date": f"Q2 {year}", "data": processed_q2})
-        final_results.append({"ticker": ticker, "filing_date": f"Q3 {year}", "data": processed_q3})
-        final_results.append({"ticker": ticker, "filing_date": f"Q4 {year}", "data": processed_q4})
-        final_results.append({"ticker": ticker, "filing_date": f"FY {year}", "data": fy_data})
-
-    # Sort the final results to ensure they are in chronological order for charting
-    final_results.sort(key=lambda x: (x['filing_date'].split()[1], x['filing_date'].split()[0]))
-    return final_results
-
-
-@app.route('/get_insights_data', methods=['GET'])
+@app.route('/get_basic_data', methods=['GET'])
 @limiter.limit("30 per minute")
 @firebase_token_required 
-def get_insights_data(current_user_uid): 
+def get_basic_data(): 
     ticker_symbol = request.args.get('ticker')
     if not ticker_symbol:
         return jsonify({'error': 'Ticker symbol is required'}), 400
-
     try:
-        try:
-            company = edgar.Company(ticker_symbol)
-            filings = company.get_filings().latest(1)
-            if not filings:
-                return jsonify({'error': f"Ticker '{ticker_symbol}' is not valid or has no filings on EDGAR."}), 400
-        except Exception as e:
-            return jsonify({'error': f"Invalid ticker '{ticker_symbol}': {str(e)}"}), 400
-        
-        # Check Firestore first
-        firestore_data = get_financials_from_firestore(ticker_symbol)
-        if firestore_data:
-            # Convert dict back to list of dicts
-            data_list = [v for k, v in firestore_data.items()]
+        basic_data = get_financials_from_firestore(ticker_symbol,"extracted_data")
+
+        if basic_data:
+
+            data_list = [v for k, v in basic_data.items()]
             return jsonify(data_list)
-        else:
-            # If not in Firestore, fetch from Edgar
-            raw_results = extract_core_financials_from_edgar(ticker_symbol)
-            if not raw_results:
-                 return jsonify({'error': f'Could not extract financial data for {ticker_symbol} from EDGAR.'}), 404
-
-            # Process data to calculate Q4
-            processed_data = calculate_and_process_financials(raw_results, ticker_symbol)
-
-            # Save the processed data to Firestore
-            save_financials_to_firestore(ticker_symbol, processed_data)
-            
-            return jsonify(processed_data)
-
     except Exception as e:
         return jsonify({'error': f'An unexpected error occurred while fetching insights data for {ticker_symbol}. Details: {str(e)}'}), 500
-
-
-def save_financials_to_firestore(ticker, processed_data):
-    if not db:
-        print("Firestore not initialized. Skipping save.")
-        return
-    try:
-        doc_ref = db.collection('corefillings').document(ticker)
-        
-        # Structure data with filing_date as the key
-        data_to_save = {item['filing_date']: item for item in processed_data}
-
-        doc_ref.set(data_to_save, merge=True)
-
-        print(f"Financials saved to Firestore in document '{ticker}'")
-    except Exception as e:
-        print(f"Error saving financials to Firestore: {e}")
-
-
-def find_revenue_line(inc, period):
-    revenue_candidates = [
-        "RevenueFromContractWithCustomerExcludingAssessedTax",
-        "RevenueFromContractWithCustomer",
-        "Revenues",
-        "Revenue",
-        "SalesRevenueNet",
-        "SalesRevenueServicesNet",
-        "SalesRevenueGoodsNet",
-        "OperatingRevenue",
-        "TotalRevenuesAndOtherIncome",
-        "NetSales"   # Apple pre-2018
-    ]
-
-    def has_value(idx):
-        try:
-            val = inc.loc[idx, period]
-            if isinstance(val, pd.Series):
-                val = val.iloc[0]
-            return pd.notna(val) and str(val).strip() != ""
-        except Exception:
-            return False
-
-    # 1) Check known candidates
-    for candidate in revenue_candidates:
-        if candidate in inc.index and has_value(candidate):
-            
-            return candidate
-
-    # 2) Fallback: fuzzy search
-    for idx in inc.index:
-        if any(word in idx.lower() for word in ["revenue", "sales", "netsales", "net_sales"]):
-            if has_value(idx):
-                
-                return idx
-
-    print("[DEBUG] No revenue line found with a numeric value")
-    return None
-
-def get_financials_from_firestore(ticker_sym):
-    if not db:
-        
-        return None
     
+@app.route('/get_segment_data', methods=['GET'])
+@limiter.limit("30 per minute")
+@firebase_token_required 
+def get_segment_data(): 
+    ticker_symbol = request.args.get('ticker')
+    if not ticker_symbol:
+        return jsonify({'error': 'Ticker symbol is required'}), 400
     try:
-        doc_ref = db.collection('corefillings').document(ticker_sym.upper())
+        segment_data = get_financials_from_firestore(ticker_symbol, "segment_data")
+        if segment_data:
+            return jsonify(segment_data)
+        else:
+            return jsonify({'error': f'No segment data found for {ticker_symbol}'}), 404
+    except Exception as e:
+        return jsonify({'error': f'An unexpected error occurred while fetching segment data for {ticker_symbol}. Details: {str(e)}'}), 500
+
+
+
+def get_financials_from_firestore(ticker_sym,extracted_data_type):
+    if not db:
+        return None
+    try:
+        doc_ref = db.collection(extracted_data_type).document(ticker_sym.upper())
         doc = doc_ref.get()
         if doc.exists:
             data = doc.to_dict()
@@ -365,166 +195,6 @@ def get_financials_from_firestore(ticker_sym):
     except Exception as e:
         print(f"Error retrieving financials for {ticker_sym}: {e}")
         return None
-
-
-
-def extract_core_financials_from_edgar(ticker):
-    try:
-        companyname = edgar.Company(ticker)
-        bs = companyname.balance_sheet(periods=60, annual=False, concise_format=False, as_dataframe=True)
-        inc = companyname.income_statement(periods=60, annual=False, concise_format=False, as_dataframe=True)
-        cf = companyname.cash_flow(periods=60, annual=False, concise_format=False, as_dataframe=True)
-
-        period_cols = None
-        if bs is not None and not bs.empty:
-            period_cols = [col for col in bs.columns if str(col).startswith(('Q', 'FY'))]
-        if inc is not None and not inc.empty:
-            inc_periods = [col for col in inc.columns if str(col).startswith(('Q', 'FY'))]
-            if period_cols is not None:
-                period_cols = [col for col in period_cols if col in inc_periods]
-            else:
-                period_cols = inc_periods
-        if cf is not None and not cf.empty:
-            cf_periods = [col for col in cf.columns if str(col).startswith(('Q', 'FY'))]
-            if period_cols is not None:
-                period_cols = [col for col in period_cols if col in cf_periods]
-            else:
-                period_cols = cf_periods
-        if not period_cols:
-            return []
-
-        def get_first_value(df, row_name, col_name):
-            try:
-                vals = df.loc[row_name, col_name]
-                if isinstance(vals, pd.Series):
-                    return vals.iloc[0]
-                return vals
-            except Exception:
-                return ""
-
-        results = []
-        
-        for period in period_cols:
-            # Standardize period label (e.g., 'Q1 2023', 'FY 2023')
-            period_str = str(period).strip()
-            if period_str.startswith('FY'):
-                year = period_str[2:].strip()
-                period_label = f"FY {year}"
-            else:
-                period_label = ' '.join(period_str.split())
-
-            core_kpis = {}
-
-            # Balance Sheet
-            if bs is not None and not bs.empty:
-                if 'CashAndCashEquivalentsAtCarryingValue' in bs.index:
-                    core_kpis['Cash'] = normalize_number_string(get_first_value(bs, 'CashAndCashEquivalentsAtCarryingValue', period))
-                if 'Assets' in bs.index:
-                    core_kpis['Assets'] = normalize_number_string(get_first_value(bs, 'Assets', period))
-                if 'AssetsCurrent' in bs.index:
-                    core_kpis['Current Assets'] = normalize_number_string(get_first_value(bs, 'AssetsCurrent', period))
-                if 'Goodwill' in bs.index:
-                    core_kpis['Goodwill'] = normalize_number_string(get_first_value(bs, 'Goodwill', period))
-                if 'PropertyPlantAndEquipmentNet' in bs.index:
-                    core_kpis['Property, Plant and Equipment, Net'] = normalize_number_string(get_first_value(bs, 'PropertyPlantAndEquipmentNet', period))
-                if 'OtherAssetsNoncurrent' in bs.index:
-                    core_kpis['Other Assets, Noncurrent'] = normalize_number_string(get_first_value(bs, 'OtherAssetsNoncurrent', period))
-                if 'Liabilities' in bs.index:
-                    core_kpis['Liabilities'] = normalize_number_string(get_first_value(bs, 'Liabilities', period))
-                if 'LiabilitiesCurrent' in bs.index:
-                    core_kpis['Current Liabilities'] = normalize_number_string(get_first_value(bs, 'LiabilitiesCurrent', period))
-                if 'LongTermDebtNoncurrent' in bs.index:
-                    core_kpis['Long Term Debt'] = normalize_number_string(get_first_value(bs, 'LongTermDebtNoncurrent', period))
-                elif 'LongTermDebt' in bs.index:
-                    core_kpis['Long Term Debt'] = normalize_number_string(get_first_value(bs, 'LongTermDebt', period))
-                if 'RetainedEarningsAccumulatedDeficit' in bs.index:
-                    core_kpis['Retained Earnings'] = normalize_number_string(get_first_value(bs, 'RetainedEarningsAccumulatedDeficit', period))
-                if 'StockholdersEquity' in bs.index:
-                    core_kpis["Stockholders' Equity"] = normalize_number_string(get_first_value(bs, 'StockholdersEquity', period))
-
-            # Income Statement
-            if inc is not None and not inc.empty:
-                rev_key = find_revenue_line(inc, period)
-                if rev_key:
-                    core_kpis['Revenue (Total)'] = normalize_number_string(get_first_value(inc, rev_key, period))
-
-                if 'GrossProfit' in inc.index:
-                    core_kpis['Gross Profit'] = normalize_number_string(get_first_value(inc, 'GrossProfit', period))
-                if 'OperatingIncomeLoss' in inc.index:
-                    core_kpis['Operating Income (EBIT)'] = normalize_number_string(get_first_value(inc, 'OperatingIncomeLoss', period))
-                for ni_name in ['NetIncomeLoss', 'ProfitLoss']:
-                    if ni_name in inc.index:
-                        core_kpis['Net Income'] = normalize_number_string(get_first_value(inc, ni_name, period))
-                        break
-                if 'EarningsPerShareDiluted' in inc.index:
-                    core_kpis['Earnings per Share (EPS)'] = normalize_number_string(get_first_value(inc, 'EarningsPerShareDiluted', period))
-                elif 'EarningsPerShareBasic' in inc.index:
-                    core_kpis['Earnings per Share (EPS)'] = normalize_number_string(get_first_value(inc, 'EarningsPerShareBasic', period))
-                if 'WeightedAverageNumberOfDilutedSharesOutstanding' in inc.index:
-                    core_kpis['Shares Outstanding'] = normalize_number_string(get_first_value(inc, 'WeightedAverageNumberOfDilutedSharesOutstanding', period))
-                elif 'WeightedAverageNumberOfSharesOutstandingBasic' in inc.index:
-                    core_kpis['Shares Outstanding'] = normalize_number_string(get_first_value(inc, 'WeightedAverageNumberOfSharesOutstandingBasic', period))
-
-            # Cash Flow Statement
-            if cf is not None and not cf.empty:
-                if 'NetCashProvidedByUsedInOperatingActivities' in cf.index:
-                    core_kpis['Operating Cash Flow'] = normalize_number_string(get_first_value(cf, 'NetCashProvidedByUsedInOperatingActivities', period))
-                if 'PaymentsToAcquirePropertyPlantAndEquipment' in cf.index:
-                    core_kpis['Capital Expenditures'] = normalize_number_string(get_first_value(cf, 'PaymentsToAcquirePropertyPlantAndEquipment', period))
-                op_cf_val = core_kpis.get('Operating Cash Flow')
-                capex_val = core_kpis.get('Capital Expenditures')
-                if op_cf_val and capex_val:
-                    try:
-                        free_cash_flow = int(op_cf_val) + int(capex_val)
-                        core_kpis['Free Cash Flow'] = str(free_cash_flow)
-                    except Exception:
-                        pass
-
-            final_core_kpis = {k: v for k, v in core_kpis.items() if v}
-            results.append({
-                "ticker": ticker,
-                "filing_date": period_label,
-                "data": final_core_kpis
-            })
-
-        return results
-    except Exception as e:
-        print(f"ERROR extracting core financials with edgar: {e}")
-        return []
-
-
-def normalize_number_string(value):
-    if pd.isna(value):
-        return ""
-    s_value = str(value).strip().upper()
-    s_value = s_value.replace('$', '').replace('%', '').replace(',', '').strip()
-
-    if not s_value:
-        return ""
-
-    multiplier = 1
-    if s_value.endswith('K'):
-        multiplier = 1_000
-        s_value = s_value[:-1]
-    elif s_value.endswith('M'):
-        multiplier = 1_000_000
-        s_value = s_value[:-1]
-    elif s_value.endswith('B'):
-        multiplier = 1_000_000_000
-        s_value = s_value[:-1]
-    elif s_value.endswith('T'):
-        multiplier = 1_000_000_000_000
-        s_value = s_value[:-1]
-    
-    try:
-        num = float(s_value) * multiplier
-        if num.is_integer():
-            return str(int(num))
-        else:
-            return f"{num:.2f}"
-    except ValueError:
-        return ""
-    
 
 @app.route('/save_calculation', methods=['POST'])
 @firebase_token_required 
