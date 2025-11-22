@@ -147,7 +147,7 @@ def get_trailing_metrics(current_user_uid):
 @app.route('/get_basic_data', methods=['GET'])
 @limiter.limit("30 per minute")
 @firebase_token_required 
-def get_basic_data(): 
+def get_basic_data(current_user_uid): 
     ticker_symbol = request.args.get('ticker')
     if not ticker_symbol:
         return jsonify({'error': 'Ticker symbol is required'}), 400
@@ -164,7 +164,7 @@ def get_basic_data():
 @app.route('/get_segment_data', methods=['GET'])
 @limiter.limit("30 per minute")
 @firebase_token_required 
-def get_segment_data(): 
+def get_segment_data(current_user_uid): 
     ticker_symbol = request.args.get('ticker')
     if not ticker_symbol:
         return jsonify({'error': 'Ticker symbol is required'}), 400
