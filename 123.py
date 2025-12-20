@@ -144,6 +144,30 @@ def get_trailing_metrics(current_user_uid):
     except Exception as e:
         return jsonify({'error': f'An unexpected error occurred while fetching or calculating data for {ticker_symbol}. Please try again later. Details: {str(e)}'}), 500
 
+@app.route('/get_market_price', methods=['GET'])
+@limiter.limit("60 per minute")
+@firebase_token_required
+def get_market_price(current_user_uid):
+    """Get only the current market price for a ticker"""
+    ticker_symbol = request.args.get('ticker')
+    if not ticker_symbol:
+        return jsonify({'error': 'Ticker symbol is required'}), 400
+    
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        info = ticker.info
+        
+        if not info or 'regularMarketPrice' not in info:
+            return jsonify({'error': f'Could not find price for ticker: {ticker_symbol}'}), 404
+        
+        return jsonify({
+            'ticker': ticker_symbol,
+            'price': info.get('regularMarketPrice'),
+            'exchange': info.get('exchange', 'N/A')
+        })
+    except Exception as e:
+        return jsonify({'error': f'Error fetching price: {str(e)}'}), 500
+
 @app.route('/get_basic_data', methods=['GET'])
 @limiter.limit("30 per minute")
 @firebase_token_required 
