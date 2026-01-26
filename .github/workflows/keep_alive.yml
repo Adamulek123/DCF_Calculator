@@ -2,8 +2,9 @@ name: Keep Backend Alive
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
-  workflow_dispatch: 
+    # Run every 5 minutes to beat GitHub's delay and Render's timer
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   ping:
