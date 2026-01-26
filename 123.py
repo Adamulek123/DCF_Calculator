@@ -279,6 +279,9 @@ def delete_calculation(current_user_uid, calc_id):
         return jsonify({'message': f'Calculation "{calc_id}" deleted successfully!'}), 200
     except Exception as e:
         return jsonify({'message': f'Error deleting calculation: {str(e)}'}), 500
+@app.route('/')
+def health_check():
+    return "Running", 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
