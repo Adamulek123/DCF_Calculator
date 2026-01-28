@@ -1,5 +1,3 @@
-from dotenv import load_dotenv
-load_dotenv() 
 from flask import Flask, request, jsonify
 import yfinance as yf
 from flask_cors import CORS
@@ -31,19 +29,20 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
+encoded_key = os.environ.get('FIREBASE_SERVICE_ACCOUNT_KEY_BASE64')
 db = None
-key_path = os. environ.get('FIREBASE_SERVICE_ACCOUNT_KEY_PATH')
-
-if key_path and os.path.exists(key_path):
+if encoded_key:
     try:
-        cred = credentials.Certificate(key_path)
-        firebase_admin. initialize_app(cred)
+        decoded_key_str = base64.b64decode(encoded_key).decode('utf-8')
+        service_account_info = json.loads(decoded_key_str)
+        cred = credentials.Certificate(service_account_info)
+        firebase_admin.initialize_app(cred)
         db = firestore.client()
-        print(f"Firebase Admin SDK initialized from file: {key_path}")
+        print("Firebase Admin SDK initialized successfully from secret.")
     except Exception as e:
-        print(f"Error initializing Firebase from file: {e}")
+        print(f"Error initializing Firebase Admin SDK from secret: {e}")
 else:
-    print("No Firebase credentials found.")
+    print("FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable not found. Firebase features will be limited.")
 
 
 _ticker_cache = []
