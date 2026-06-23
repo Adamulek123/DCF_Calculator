@@ -46,6 +46,8 @@ else:
 
 
 _ticker_cache = []
+_fx_cache = {}
+FX_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 def load_tickers_to_cache():
     global _ticker_cache
@@ -70,6 +72,115 @@ def is_valid_ticker(ticker_symbol):
         return False
     ticker_upper = ticker_symbol.upper()
     return any(t.get('symbol', '').upper() == ticker_upper for t in _ticker_cache)
+
+
+def _safe_float(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_tickers(ticker_symbols):
+    normalized = []
+    for symbol in ticker_symbols:
+        symbol_clean = str(symbol or "").strip().upper()
+        normalized.append(symbol_clean)
+    return normalized
+
+
+def list_current_price(ticker_symbols):
+    normalized = _normalize_tickers(ticker_symbols)
+    prices = []
+
+    for symbol in normalized:
+        if not symbol:
+            prices.append(None)
+            continue
+
+        try:
+            ticker = yf.Ticker(symbol)
+            fast_info = ticker.fast_info or {}
+            current_price = _safe_float(fast_info.get("last_price"))
+            if current_price is None:
+                info = ticker.info
+                current_price = _safe_float(info.get("regularMarketPrice"))
+            prices.append(current_price)
+        except Exception:
+            prices.append(None)
+
+    return prices
+
+
+def _sanitize_positions(raw_positions):
+    if not isinstance(raw_positions, list):
+        return None, "Positions must be a list."
+
+    cleaned = []
+    for idx, position in enumerate(raw_positions):
+        if not isinstance(position, dict):
+            return None, f"Position at index {idx} must be an object."
+
+        ticker = str(position.get("ticker", "")).strip().upper()
+        side = str(position.get("side", "")).strip().lower()
+        sizing_mode = str(position.get("sizingMode", "")).strip().lower()
+        currency = str(position.get("currency", "USD")).strip().upper()
+
+        entry_price_usd = _safe_float(position.get("entryPriceUsd"))
+        size_value = _safe_float(position.get("sizeValue"))
+        leverage = _safe_float(position.get("leverage"))
+
+        if not ticker:
+            return None, f"Position at index {idx} is missing ticker."
+        if side not in ("buy", "sell"):
+            return None, f"Position at index {idx} has invalid side."
+        if sizing_mode not in ("shares", "notional"):
+            return None, f"Position at index {idx} has invalid sizingMode."
+        if entry_price_usd is None or entry_price_usd <= 0:
+            return None, f"Position at index {idx} has invalid entryPriceUsd."
+        if size_value is None or size_value <= 0:
+            return None, f"Position at index {idx} has invalid sizeValue."
+        if leverage is None or leverage <= 0:
+            return None, f"Position at index {idx} has invalid leverage."
+        if len(currency) != 3:
+            return None, f"Position at index {idx} has invalid currency."
+
+        cleaned.append({
+            "id": str(position.get("id", f"pos-{idx}-{int(time.time() * 1000)}")),
+            "ticker": ticker,
+            "side": side,
+            "sizingMode": sizing_mode,
+            "sizeValue": size_value,
+            "entryPriceUsd": entry_price_usd,
+            "leverage": leverage,
+            "currency": currency,
+            "createdAt": str(position.get("createdAt", datetime.datetime.utcnow().isoformat() + "Z"))
+        })
+
+    return cleaned, None
+
+
+def _get_conversion_rates(base_currency="USD"):
+    base = str(base_currency or "USD").strip().upper()
+    now = time.time()
+    cached = _fx_cache.get(base)
+
+    if cached and (now - cached.get("timestamp", 0) < FX_CACHE_TTL_SECONDS):
+        return cached["payload"]
+
+    response = requests.get(f"https://api.frankfurter.dev/v1/latest?base={base}", timeout=10)
+    response.raise_for_status()
+    payload = response.json()
+
+    rates = payload.get("rates")
+    if not isinstance(rates, dict):
+        raise ValueError("Invalid conversion rates payload.")
+
+    payload["rates"][base] = 1.0
+    _fx_cache[base] = {"timestamp": now, "payload": payload}
+    return payload
 
 
 def firebase_token_required(f):
@@ -498,6 +609,96 @@ def load_calculations(current_user_uid):
         return jsonify(calculations), 200
     except Exception as e:
         return jsonify({'message': f'Error loading calculations: {str(e)}'}), 500
+
+
+@app.route('/portfolio/save', methods=['POST'])
+@limiter.limit("60 per minute")
+@firebase_token_required
+def save_portfolio(current_user_uid):
+    if not db:
+        return jsonify({'message': 'Database not configured, cannot save portfolio.'}), 500
+
+    data = request.get_json(silent=True) or {}
+    positions = data.get("positions", [])
+    base_currency = str(data.get("baseCurrency", "USD")).strip().upper()
+
+    cleaned_positions, validation_error = _sanitize_positions(positions)
+    if validation_error:
+        return jsonify({'message': validation_error}), 400
+    if len(base_currency) != 3:
+        return jsonify({'message': 'Invalid baseCurrency.'}), 400
+
+    try:
+        doc_ref = db.collection('users').document(current_user_uid).collection('portfolio').document('default')
+        doc_ref.set({
+            'positions': cleaned_positions,
+            'baseCurrency': base_currency,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+        return jsonify({'message': 'Portfolio saved successfully.', 'count': len(cleaned_positions)}), 200
+    except Exception as e:
+        return jsonify({'message': f'Error saving portfolio: {str(e)}'}), 500
+
+
+@app.route('/portfolio/load', methods=['GET'])
+@limiter.limit("60 per minute")
+@firebase_token_required
+def load_portfolio(current_user_uid):
+    if not db:
+        return jsonify({'message': 'Database not configured, cannot load portfolio.'}), 500
+
+    try:
+        doc_ref = db.collection('users').document(current_user_uid).collection('portfolio').document('default')
+        doc = doc_ref.get()
+
+        if not doc.exists:
+            return jsonify({'positions': [], 'baseCurrency': 'USD'}), 200
+
+        payload = doc.to_dict() or {}
+        positions = payload.get('positions') if isinstance(payload.get('positions'), list) else []
+        base_currency = str(payload.get('baseCurrency', 'USD')).strip().upper()
+        if len(base_currency) != 3:
+            base_currency = 'USD'
+
+        return jsonify({'positions': positions, 'baseCurrency': base_currency}), 200
+    except Exception as e:
+        return jsonify({'message': f'Error loading portfolio: {str(e)}'}), 500
+
+
+@app.route('/portfolio/current-prices', methods=['POST'])
+@limiter.limit("30 per minute")
+@firebase_token_required
+def get_portfolio_current_prices(current_user_uid):
+    data = request.get_json(silent=True) or {}
+    tickers = data.get("tickers")
+
+    if not isinstance(tickers, list) or not tickers:
+        return jsonify({'message': 'Tickers list is required.'}), 400
+
+    normalized_tickers = _normalize_tickers(tickers)
+    prices = list_current_price(normalized_tickers)
+
+    return jsonify({
+        'tickers': normalized_tickers,
+        'prices': prices
+    }), 200
+
+
+@app.route('/portfolio/conversion-rates', methods=['GET'])
+@limiter.limit("30 per minute")
+@firebase_token_required
+def get_portfolio_conversion_rates(current_user_uid):
+    base_currency = str(request.args.get("base", "USD")).strip().upper()
+    if len(base_currency) != 3:
+        return jsonify({'message': 'Invalid base currency.'}), 400
+
+    try:
+        payload = _get_conversion_rates(base_currency)
+        return jsonify(payload), 200
+    except requests.exceptions.RequestException as e:
+        return jsonify({'message': f'Failed to fetch conversion rates: {str(e)}'}), 502
+    except Exception as e:
+        return jsonify({'message': f'Conversion rate processing error: {str(e)}'}), 500
 
 @app.route('/delete_calculation/<string:calc_id>', methods=['DELETE'])
 @firebase_token_required 
