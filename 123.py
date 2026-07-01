@@ -293,13 +293,34 @@ def get_market_price(current_user_uid):
     
     try:
         ticker = yf.Ticker(ticker_symbol)
-        info = ticker.info
-        
-        if not info or 'regularMarketPrice' not in info:
+        info = {}
+        try:
+            fetched_info = ticker.info
+            if isinstance(fetched_info, dict):
+                info = fetched_info
+        except Exception as e:
+            print(f"Ticker info fetch failed for {ticker_symbol}: {e}")
+
+        current_price = _safe_float(info.get('regularMarketPrice')) if info else None
+        if current_price is None and info:
+            current_price = _safe_float(info.get('currentPrice'))
+        if current_price is None:
+            try:
+                fast_info = ticker.fast_info or {}
+                current_price = _safe_float(fast_info.get('last_price'))
+            except Exception as e:
+                print(f"Ticker fast_info fetch failed for {ticker_symbol}: {e}")
+        if current_price is None:
+            try:
+                intraday_df = ticker.history(period="1d", interval="1m")
+                if not intraday_df.empty and 'Close' in intraday_df.columns:
+                    current_price = _safe_float(intraday_df['Close'].dropna().iloc[-1])
+            except Exception as e:
+                print(f"Ticker intraday fallback failed for {ticker_symbol}: {e}")
+        if current_price is None:
             return jsonify({'error': f'Could not find price for ticker: {ticker_symbol}'}), 404
-        
-        current_price = info.get('regularMarketPrice')
-        exchange = info.get('exchange', 'N/A')
+
+        exchange = info.get('exchange', 'N/A') if info else 'N/A'
         
         
         change = None
@@ -333,7 +354,7 @@ def get_market_price(current_user_uid):
         
         return jsonify({
             'ticker': ticker_symbol,
-            'price': current_price,
+            'price': round(current_price, 2),
             'exchange': exchange,
             'change': round(change, 2) if change is not None else None,
             'pctChange': round(pct_change, 2) if pct_change is not None else None,
@@ -360,8 +381,11 @@ def get_basic_data(current_user_uid):
         basic_data = get_financials_from_firestore(ticker_symbol, "extracted_data")
 
         if basic_data:
-            data_list = [v for k, v in basic_data.items()]
-            return jsonify(data_list)
+            if isinstance(basic_data, dict):
+                return jsonify([v for _, v in basic_data.items()])
+            if isinstance(basic_data, list):
+                return jsonify(basic_data)
+            return jsonify({'error': f'Unexpected financial data format for {ticker_symbol}'}), 500
         else:
             return jsonify({'error': f'No financial data found for {ticker_symbol}'}), 400
     except Exception as e:
@@ -446,10 +470,13 @@ def get_stock_info_data(current_user_uid):
     
     try:
         ticker = yf.Ticker(ticker_symbol)
-        info = ticker.info
-        
-        if not info or 'regularMarketPrice' not in info:
-            return jsonify({'error': f'Could not find data for ticker: {ticker_symbol}'}), 404
+        info = {}
+        try:
+            fetched_info = ticker.info
+            if isinstance(fetched_info, dict):
+                info = fetched_info
+        except Exception as e:
+            print(f"Ticker info fetch failed for {ticker_symbol}: {e}")
         
         def safe_float(val):
             try:
