@@ -9,6 +9,8 @@ import jwt
 import datetime
 import requests
 from functools import wraps
+from concurrent.futures import ThreadPoolExecutor, wait
+from threading import Lock
 import time
 import json
 import base64
@@ -47,7 +49,15 @@ else:
 
 _ticker_cache = []
 _fx_cache = {}
+_price_cache = {}
+_price_cache_lock = Lock()
 FX_CACHE_TTL_SECONDS = 6 * 60 * 60
+PRICE_CACHE_TTL_SECONDS = 60
+PRICE_FAILURE_CACHE_TTL_SECONDS = 15
+MAX_PORTFOLIO_TICKERS = 50
+MAX_PRICE_WORKERS = 8
+PORTFOLIO_PRICE_FETCH_TIMEOUT_SECONDS = 10
+PORTFOLIO_LOAD_TIMEOUT_SECONDS = 15
 
 def load_tickers_to_cache():
     global _ticker_cache
@@ -83,35 +93,131 @@ def _safe_float(value):
         return None
 
 
-def _normalize_tickers(ticker_symbols):
+def _normalize_tickers(ticker_symbols, deduplicate=False):
     normalized = []
+    seen = set()
     for symbol in ticker_symbols:
         symbol_clean = str(symbol or "").strip().upper()
+        if deduplicate and (not symbol_clean or symbol_clean in seen):
+            continue
+        seen.add(symbol_clean)
         normalized.append(symbol_clean)
     return normalized
 
 
+def _fetch_current_price(symbol):
+    try:
+        ticker = yf.Ticker(symbol)
+        fast_info = ticker.fast_info or {}
+        current_price = _safe_float(fast_info.get("last_price"))
+        if current_price is None:
+            info = ticker.info or {}
+            current_price = _safe_float(info.get("regularMarketPrice"))
+        return current_price
+    except Exception as exc:
+        print(f"Portfolio price fetch failed for {symbol}: {exc}")
+        return None
+
+
 def list_current_price(ticker_symbols):
     normalized = _normalize_tickers(ticker_symbols)
+    now = time.time()
+    results = {}
+    missing = []
+
+    with _price_cache_lock:
+        for symbol in set(normalized):
+            if not symbol:
+                continue
+            cached = _price_cache.get(symbol)
+            ttl = (
+                PRICE_CACHE_TTL_SECONDS
+                if cached and cached.get("price") is not None
+                else PRICE_FAILURE_CACHE_TTL_SECONDS
+            )
+            if cached and now - cached.get("timestamp", 0) < ttl:
+                results[symbol] = cached
+            else:
+                missing.append(symbol)
+
+    if missing:
+        worker_count = min(MAX_PRICE_WORKERS, len(missing))
+        executor = ThreadPoolExecutor(max_workers=worker_count)
+        futures = {
+            executor.submit(_fetch_current_price, symbol): symbol
+            for symbol in missing
+        }
+        completed, timed_out = wait(
+            futures,
+            timeout=PORTFOLIO_PRICE_FETCH_TIMEOUT_SECONDS
+        )
+
+        for future in completed:
+            symbol = futures[future]
+            try:
+                price = future.result()
+            except Exception as exc:
+                print(f"Unexpected portfolio price worker failure for {symbol}: {exc}")
+                price = None
+            quote = {"price": price, "timestamp": time.time()}
+            results[symbol] = quote
+            with _price_cache_lock:
+                _price_cache[symbol] = quote
+
+        for future in timed_out:
+            symbol = futures[future]
+            future.cancel()
+            quote = {"price": None, "timestamp": time.time()}
+            results[symbol] = quote
+            with _price_cache_lock:
+                _price_cache[symbol] = quote
+            print(f"Portfolio price fetch timed out for {symbol}")
+
+        executor.shutdown(wait=False, cancel_futures=True)
+
     prices = []
-
+    quote_timestamps = []
     for symbol in normalized:
-        if not symbol:
-            prices.append(None)
-            continue
+        quote = results.get(symbol, {})
+        prices.append(quote.get("price"))
+        timestamp = quote.get("timestamp")
+        quote_timestamps.append(
+            datetime.datetime.fromtimestamp(
+                timestamp, datetime.timezone.utc
+            ).isoformat()
+            if timestamp
+            else None
+        )
 
-        try:
-            ticker = yf.Ticker(symbol)
-            fast_info = ticker.fast_info or {}
-            current_price = _safe_float(fast_info.get("last_price"))
-            if current_price is None:
-                info = ticker.info
-                current_price = _safe_float(info.get("regularMarketPrice"))
-            prices.append(current_price)
-        except Exception:
-            prices.append(None)
+    return prices, quote_timestamps
 
-    return prices
+
+def _firestore_error_response(action, error):
+    detail = str(error)
+    detail_lower = detail.lower()
+
+    if "invalid_grant" in detail_lower or "invalid jwt" in detail_lower:
+        print(f"Firestore authentication failed while {action}: {detail}")
+        return jsonify({
+            "message": (
+                "Portfolio storage is temporarily unavailable because the "
+                "backend Firebase authentication failed."
+            ),
+            "code": "FIREBASE_AUTH_UNAVAILABLE"
+        }), 503
+
+    if "deadline" in detail_lower or "timeout" in detail_lower:
+        print(f"Firestore timed out while {action}: {detail}")
+        return jsonify({
+            "message": "Portfolio storage took too long to respond. Please try again.",
+            "code": "FIRESTORE_TIMEOUT"
+        }), 504
+
+    print(f"Firestore error while {action}: {detail}")
+    return jsonify({
+        "message": f"Unable to {action}.",
+        "code": "FIRESTORE_ERROR"
+    }), 500
 
 
 def _sanitize_positions(raw_positions):
@@ -664,7 +770,7 @@ def save_portfolio(current_user_uid):
         })
         return jsonify({'message': 'Portfolio saved successfully.', 'count': len(cleaned_positions)}), 200
     except Exception as e:
-        return jsonify({'message': f'Error saving portfolio: {str(e)}'}), 500
+        return _firestore_error_response("save portfolio", e)
 
 
 @app.route('/portfolio/load', methods=['GET'])
@@ -676,7 +782,7 @@ def load_portfolio(current_user_uid):
 
     try:
         doc_ref = db.collection('users').document(current_user_uid).collection('portfolio').document('default')
-        doc = doc_ref.get()
+        doc = doc_ref.get(timeout=PORTFOLIO_LOAD_TIMEOUT_SECONDS)
 
         if not doc.exists:
             return jsonify({'positions': [], 'baseCurrency': 'USD'}), 200
@@ -689,7 +795,7 @@ def load_portfolio(current_user_uid):
 
         return jsonify({'positions': positions, 'baseCurrency': base_currency}), 200
     except Exception as e:
-        return jsonify({'message': f'Error loading portfolio: {str(e)}'}), 500
+        return _firestore_error_response("load portfolio", e)
 
 
 @app.route('/portfolio/current-prices', methods=['POST'])
@@ -702,12 +808,21 @@ def get_portfolio_current_prices(current_user_uid):
     if not isinstance(tickers, list) or not tickers:
         return jsonify({'message': 'Tickers list is required.'}), 400
 
-    normalized_tickers = _normalize_tickers(tickers)
-    prices = list_current_price(normalized_tickers)
+    normalized_tickers = _normalize_tickers(tickers, deduplicate=True)
+    if not normalized_tickers:
+        return jsonify({'message': 'At least one valid ticker is required.'}), 400
+    if len(normalized_tickers) > MAX_PORTFOLIO_TICKERS:
+        return jsonify({
+            'message': f'A maximum of {MAX_PORTFOLIO_TICKERS} tickers is allowed.'
+        }), 400
+
+    prices, quote_timestamps = list_current_price(normalized_tickers)
 
     return jsonify({
         'tickers': normalized_tickers,
-        'prices': prices
+        'prices': prices,
+        'quoteTimestamps': quote_timestamps,
+        'requestedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
     }), 200
 
 
