@@ -262,7 +262,10 @@ def _sanitize_positions(raw_positions):
             "entryPriceUsd": entry_price_usd,
             "leverage": leverage,
             "currency": currency,
-            "createdAt": str(position.get("createdAt", datetime.datetime.utcnow().isoformat() + "Z"))
+            "createdAt": str(
+                position.get("createdAt")
+                or datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+            )
         })
 
     return cleaned, None
