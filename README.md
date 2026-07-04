@@ -33,6 +33,7 @@ The repositories have separate Git histories and deployments. API-contract chang
 - Read prepared annual, quarterly, TTM, and segment data from Firestore
 - Save, load, and delete per-user DCF calculations
 - Save and load a per-user portfolio
+- Store named per-user watchlists and calculate ranked Dip Finder performance
 - Fetch portfolio prices and currency conversion rates
 - Provide the ticker search dataset from `all_exchanges_clean.json`
 - Apply route-specific rate limits
@@ -45,7 +46,6 @@ The repositories have separate Git histories and deployments. API-contract chang
 - Firebase Admin SDK for Cloud Firestore
 - `requests` and [Frankfurter](https://frankfurter.dev/) for exchange rates
 - Flask-CORS and Flask-Limiter
-- PyJWT
 - `edgartools` is installed/imported for EDGAR-related work, though the current public routes primarily use yfinance and Firestore
 
 ## Project structure
@@ -101,6 +101,18 @@ python 123.py
 
 The server binds to `0.0.0.0` and uses the `PORT` environment variable, defaulting to `5000`. The frontend expects `http://localhost:5000` during local development.
 
+When 123.py is run directly, the backend automatically enables safe local emulator mode:
+
+- Firebase Auth: 127.0.0.1:9099
+- Cloud Firestore: 127.0.0.1:8080
+- Firebase project: dcf123-b6cb1
+
+Start both Firebase emulators before the backend:
+
+    firebase emulators:start --only auth,firestore --project dcf123-b6cb1
+
+Gunicorn and Render do not enable this mode automatically. Set USE_FIREBASE_EMULATORS=0 only when you deliberately want direct local execution to use production Firebase credentials.
+
 Check the unauthenticated health endpoint:
 
 ```bash
@@ -117,11 +129,11 @@ Feature routes expect a Firebase ID token in the request header:
 Authorization: Bearer <firebase-id-token>
 ```
 
-### Important current security limitation
+### Token verification
 
-The current `firebase_token_required` middleware uses PyJWT with signature verification disabled and extracts a UID from the unverified payload. Despite the function name and Firebase Admin initialization, it does **not** currently call `firebase_admin.auth.verify_id_token`.
+Protected routes use Firebase Admin signature, issuer, audience, expiry, revocation, and disabled-user checks. The UID comes only from the verified token, and unverified email/password accounts are rejected. Missing, invalid, expired, revoked, and disabled-user tokens return 401; unverified email accounts return 403; unavailable Firebase Admin configuration returns 503.
 
-Do not describe the current middleware as secure token verification. Before relying on it for production authorization, replace the unverified decode with Firebase Admin token verification and reject expired, malformed, or incorrectly issued tokens. This is especially important because the extracted UID selects user-owned Firestore documents.
+Local direct execution configures Auth and Firestore emulators automatically. For Flask CLI or another imported development runner, set USE_FIREBASE_EMULATORS=1 explicitly.
 
 ## API
 
@@ -177,6 +189,19 @@ Example save body:
 | `POST` | `/portfolio/current-prices` | 30/minute | Returns yfinance prices for a list of tickers |
 | `GET` | `/portfolio/conversion-rates?base=USD` | 30/minute | Returns Frankfurter rates, cached in memory for six hours |
 
+### Dip Finder watchlists
+
+| Method | Route | Rate limit | Description |
+| --- | --- | --- | --- |
+| GET | /watchlists | 60/minute | Returns watchlists ordered by most recent update |
+| POST | /watchlists | 30/minute | Creates a named watchlist |
+| PATCH | /watchlists/<id> | 60/minute | Renames a watchlist or replaces its ticker roster |
+| POST | /watchlists/<id>/tickers | 30/minute | Transactionally appends only missing tickers |
+| DELETE | /watchlists/<id> | 30/minute | Deletes one watchlist |
+| POST | /watchlists/performance | 20/minute | Returns 1W, 1M, 3M, 6M, YTD, and 1Y metrics |
+
+Watchlist names are whitespace-normalized and case-insensitively unique per user. Each user may store up to 20 watchlists with up to 50 validated, uppercase, unique tickers per list. The performance endpoint downloads adjusted daily closes in bulk and caches results for five minutes. Return is (latest / boundary close - 1) × 100; drawdown is min(0, latest / period high - 1) × 100. Symbols with missing history return an unavailable or partial result without failing the batch.
+
 Example current-prices body:
 
 ```json
@@ -196,11 +221,12 @@ ttm_data/{TICKER}
 ttm_segment_data/{TICKER}
 ```
 
-User data is scoped below the UID extracted by the authentication middleware:
+User data is scoped below the UID from the verified Firebase ID token:
 
 ```text
 users/{uid}/calculations/{calculationName}
 users/{uid}/portfolio/default
+users/{uid}/watchlists/{watchlistId}
 ```
 
 The API performs these operations with Firebase Admin, so client-side Firestore rules are not a substitute for correct server-side token verification and UID scoping.
@@ -222,8 +248,8 @@ Render supplies `PORT`; do not hard-code a production port. The rate limiter cur
 
 ## Development notes
 
-- CORS is currently enabled globally with `CORS(app)`.
-- API errors are returned as JSON, but keys vary between `error` and `message`; preserve existing frontend expectations when changing them.
+- CORS accepts only configured origins. CORS_ALLOWED_ORIGINS is a comma-separated override; defaults are https://adamulek123.github.io, http://localhost:8000, and http://127.0.0.1:8000.
+- API errors are returned as JSON, but keys vary between error and message; internal exception details are logged server-side rather than returned to clients.
 - Keep route names, methods, query parameters, request bodies, and response fields synchronized with `../frontend/js/`.
 - There is currently no automated backend test suite. Test the health route, authentication failure cases, the changed endpoint, and its frontend caller before committing.
 - Avoid using production Firestore documents for incidental tests; use controlled data or Firebase emulators where available.

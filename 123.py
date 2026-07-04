@@ -5,7 +5,6 @@ import pandas as pd
 import os
 import firebase_admin
 from firebase_admin import credentials, auth, firestore 
-import jwt 
 import datetime
 import requests
 from functools import wraps
@@ -14,13 +13,34 @@ from threading import Lock
 import time
 import json
 import base64
+import re
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import edgar
 from edgar import *
 
 app = Flask(__name__)
-CORS(app)
+app.config['MAX_CONTENT_LENGTH'] = 256 * 1024
+
+DEFAULT_CORS_ORIGINS = [
+    "https://adamulek123.github.io",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "CORS_ALLOWED_ORIGINS", ",".join(DEFAULT_CORS_ORIGINS)
+    ).split(",")
+    if origin.strip()
+]
+CORS(
+    app,
+    resources={r"/*": {"origins": allowed_origins}},
+    methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    supports_credentials=False,
+)
 
 edgar. set_identity("Financial Extractor Module user@example.com")
 
@@ -30,6 +50,34 @@ limiter = Limiter(
     default_limits=["200 per day", "50 per hour"],
     storage_uri="memory://",
 )
+
+def _environment_flag(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Running this file directly is the documented local-development entrypoint.
+# Gunicorn imports the module instead, so production never enables emulators
+# unless USE_FIREBASE_EMULATORS is explicitly set.
+running_directly = __name__ == "__main__"
+default_local_emulators = (
+    running_directly
+    and os.environ.get("RENDER", "").strip().lower() != "true"
+)
+use_firebase_emulators = _environment_flag(
+    "USE_FIREBASE_EMULATORS", default=default_local_emulators
+)
+if use_firebase_emulators:
+    os.environ.setdefault("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9099")
+    os.environ.setdefault("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8080")
+    os.environ.setdefault("FIREBASE_PROJECT_ID", "dcf123-b6cb1")
+    print(
+        "Local Firebase emulator mode enabled "
+        f"(Auth: {os.environ['FIREBASE_AUTH_EMULATOR_HOST']}, "
+        f"Firestore: {os.environ['FIRESTORE_EMULATOR_HOST']})."
+    )
 
 encoded_key = os.environ.get('FIREBASE_SERVICE_ACCOUNT_KEY_BASE64')
 db = None
@@ -43,6 +91,16 @@ if encoded_key:
         print("Firebase Admin SDK initialized successfully from secret.")
     except Exception as e:
         print(f"Error initializing Firebase Admin SDK from secret: {e}")
+elif os.environ.get("FIREBASE_AUTH_EMULATOR_HOST"):
+    try:
+        firebase_admin.initialize_app(options={
+            "projectId": os.environ.get("FIREBASE_PROJECT_ID", "dcf123-b6cb1")
+        })
+        if os.environ.get("FIRESTORE_EMULATOR_HOST"):
+            db = firestore.client()
+        print("Firebase Admin SDK initialized for the local emulator.")
+    except Exception as e:
+        print(f"Error initializing Firebase Admin SDK for the emulator: {e}")
 else:
     print("FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable not found. Firebase features will be limited.")
 
@@ -50,14 +108,23 @@ else:
 _ticker_cache = []
 _fx_cache = {}
 _price_cache = {}
+_history_cache = {}
 _price_cache_lock = Lock()
+_history_cache_lock = Lock()
 FX_CACHE_TTL_SECONDS = 6 * 60 * 60
 PRICE_CACHE_TTL_SECONDS = 60
 PRICE_FAILURE_CACHE_TTL_SECONDS = 15
 MAX_PORTFOLIO_TICKERS = 50
+MAX_PORTFOLIO_POSITIONS = 200
+MAX_WATCHLISTS = 20
+MAX_WATCHLIST_TICKERS = 50
+MAX_WATCHLIST_NAME_LENGTH = 60
 MAX_PRICE_WORKERS = 8
 PORTFOLIO_PRICE_FETCH_TIMEOUT_SECONDS = 10
 PORTFOLIO_LOAD_TIMEOUT_SECONDS = 15
+HISTORY_CACHE_TTL_SECONDS = 5 * 60
+HISTORY_FAILURE_CACHE_TTL_SECONDS = 60
+WATCHLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 def load_tickers_to_cache():
     global _ticker_cache
@@ -192,6 +259,260 @@ def list_current_price(ticker_symbols):
     return prices, quote_timestamps
 
 
+
+def _utc_now():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _iso_timestamp(value):
+    if isinstance(value, datetime.datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=datetime.timezone.utc)
+        return value.astimezone(datetime.timezone.utc).isoformat()
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _normalize_watchlist_name(value):
+    name = " ".join(str(value or "").split())
+    if not name:
+        return None, "Watchlist name is required."
+    if len(name) > MAX_WATCHLIST_NAME_LENGTH:
+        return None, (
+            f"Watchlist name must be {MAX_WATCHLIST_NAME_LENGTH} characters or fewer."
+        )
+    return name, None
+
+
+def _sanitize_watchlist_tickers(raw_tickers, require_nonempty=False):
+    if not isinstance(raw_tickers, list):
+        return None, "Tickers must be a list."
+
+    normalized = _normalize_tickers(raw_tickers, deduplicate=True)
+    normalized = [symbol for symbol in normalized if symbol]
+    if require_nonempty and not normalized:
+        return None, "At least one ticker is required."
+    if len(normalized) > MAX_WATCHLIST_TICKERS:
+        return None, (
+            f"A maximum of {MAX_WATCHLIST_TICKERS} tickers is allowed per watchlist."
+        )
+
+    invalid = [symbol for symbol in normalized if not is_valid_ticker(symbol)]
+    if invalid:
+        return None, f"Invalid ticker symbol: {invalid[0]}."
+
+    return normalized, None
+
+
+def _valid_watchlist_id(watchlist_id):
+    return bool(WATCHLIST_ID_PATTERN.fullmatch(str(watchlist_id or "")))
+
+
+def _watchlists_ref(uid):
+    return db.collection("users").document(uid).collection("watchlists")
+
+
+def _serialize_watchlist(doc_or_id, payload=None):
+    if payload is None:
+        payload = doc_or_id.to_dict() or {}
+        watchlist_id = doc_or_id.id
+    else:
+        watchlist_id = str(doc_or_id)
+
+    tickers = payload.get("tickers")
+    return {
+        "id": watchlist_id,
+        "name": str(payload.get("name", "")),
+        "tickers": tickers if isinstance(tickers, list) else [],
+        "createdAt": _iso_timestamp(payload.get("createdAt")),
+        "updatedAt": _iso_timestamp(payload.get("updatedAt")),
+    }
+
+
+def _list_watchlist_docs(uid):
+    return list(_watchlists_ref(uid).stream())
+
+
+def _find_name_conflict(docs, name, ignored_id=None):
+    name_key = name.casefold()
+    return next(
+        (
+            doc for doc in docs
+            if doc.id != ignored_id
+            and str((doc.to_dict() or {}).get("name", "")).casefold() == name_key
+        ),
+        None,
+    )
+
+
+def _extract_close_series(downloaded, symbol, requested_count):
+    if downloaded is None or downloaded.empty:
+        return pd.Series(dtype="float64")
+
+    close = None
+    try:
+        if isinstance(downloaded.columns, pd.MultiIndex):
+            if "Close" in downloaded.columns.get_level_values(0):
+                close_data = downloaded["Close"]
+            elif "Close" in downloaded.columns.get_level_values(-1):
+                close_data = downloaded.xs("Close", axis=1, level=-1)
+            else:
+                return pd.Series(dtype="float64")
+
+            if isinstance(close_data, pd.Series):
+                close = close_data
+            elif symbol in close_data.columns:
+                close = close_data[symbol]
+            elif requested_count == 1 and len(close_data.columns) == 1:
+                close = close_data.iloc[:, 0]
+        elif "Close" in downloaded.columns:
+            close_data = downloaded["Close"]
+            if isinstance(close_data, pd.Series):
+                close = close_data
+            elif symbol in close_data.columns:
+                close = close_data[symbol]
+    except (KeyError, TypeError, ValueError):
+        close = None
+
+    if close is None:
+        return pd.Series(dtype="float64")
+
+    close = pd.to_numeric(close, errors="coerce").dropna()
+    if close.empty:
+        return pd.Series(dtype="float64")
+
+    index = pd.to_datetime(close.index)
+    if getattr(index, "tz", None) is not None:
+        index = index.tz_convert(None)
+    close.index = index.normalize()
+    close = close[~close.index.duplicated(keep="last")].sort_index()
+    return close.astype(float)
+
+
+def _load_adjusted_close_history(tickers, force=False):
+    now = time.time()
+    histories = {}
+    missing = []
+
+    with _history_cache_lock:
+        for symbol in tickers:
+            cached = _history_cache.get(symbol)
+            ttl = (
+                HISTORY_CACHE_TTL_SECONDS
+                if cached and not cached["series"].empty
+                else HISTORY_FAILURE_CACHE_TTL_SECONDS
+            )
+            if not force and cached and now - cached["timestamp"] < ttl:
+                histories[symbol] = cached["series"].copy()
+            else:
+                missing.append(symbol)
+
+    if missing:
+        end = (_utc_now() + datetime.timedelta(days=1)).date().isoformat()
+        start = (_utc_now() - datetime.timedelta(days=400)).date().isoformat()
+        try:
+            downloaded = yf.download(
+                tickers=missing,
+                start=start,
+                end=end,
+                interval="1d",
+                auto_adjust=True,
+                progress=False,
+                group_by="column",
+                threads=True,
+            )
+        except Exception as exc:
+            print(f"Watchlist history download failed: {exc}")
+            downloaded = pd.DataFrame()
+
+        fetched_at = time.time()
+        for symbol in missing:
+            series = _extract_close_series(downloaded, symbol, len(missing))
+            histories[symbol] = series
+            with _history_cache_lock:
+                _history_cache[symbol] = {
+                    "series": series.copy(),
+                    "timestamp": fetched_at,
+                }
+
+    return histories
+
+
+def _calculate_performance(symbol, close_series):
+    empty_metrics = {
+        period: {
+            "referenceDate": None,
+            "referenceClose": None,
+            "periodHigh": None,
+            "returnPct": None,
+            "drawdownPct": None,
+        }
+        for period in ("1W", "1M", "3M", "6M", "YTD", "1Y")
+    }
+    if close_series is None or close_series.empty:
+        return {
+            "ticker": symbol,
+            "status": "unavailable",
+            "asOf": None,
+            "lastClose": None,
+            "metrics": empty_metrics,
+            "message": "Price history is unavailable.",
+        }
+
+    close_series = close_series.dropna().sort_index()
+    as_of = pd.Timestamp(close_series.index[-1]).normalize()
+    latest = float(close_series.iloc[-1])
+    anchors = {
+        "1W": as_of - pd.DateOffset(weeks=1),
+        "1M": as_of - pd.DateOffset(months=1),
+        "3M": as_of - pd.DateOffset(months=3),
+        "6M": as_of - pd.DateOffset(months=6),
+        "YTD": pd.Timestamp(year=as_of.year, month=1, day=1),
+        "1Y": as_of - pd.DateOffset(years=1),
+    }
+
+    metrics = {}
+    available = 0
+    for period, anchor in anchors.items():
+        candidates = (
+            close_series[close_series.index < anchor]
+            if period == "YTD"
+            else close_series[close_series.index <= anchor]
+        )
+        if candidates.empty:
+            metrics[period] = empty_metrics[period]
+            continue
+
+        reference_date = pd.Timestamp(candidates.index[-1]).normalize()
+        reference_close = float(candidates.iloc[-1])
+        window = close_series[close_series.index >= reference_date]
+        period_high = float(window.max()) if not window.empty else None
+        if reference_close <= 0 or period_high is None or period_high <= 0:
+            metrics[period] = empty_metrics[period]
+            continue
+
+        return_pct = (latest / reference_close - 1) * 100
+        drawdown_pct = min(0.0, (latest / period_high - 1) * 100)
+        metrics[period] = {
+            "referenceDate": reference_date.date().isoformat(),
+            "referenceClose": round(reference_close, 4),
+            "periodHigh": round(period_high, 4),
+            "returnPct": round(return_pct, 4),
+            "drawdownPct": round(drawdown_pct, 4),
+        }
+        available += 1
+
+    status = "ready" if available == len(metrics) else "partial"
+    return {
+        "ticker": symbol,
+        "status": status,
+        "asOf": as_of.date().isoformat(),
+        "lastClose": round(latest, 4),
+        "metrics": metrics,
+        "message": None if status == "ready" else "Some periods lack enough history.",
+    }
+
 def _firestore_error_response(action, error):
     detail = str(error)
     detail_lower = detail.lower()
@@ -200,8 +521,8 @@ def _firestore_error_response(action, error):
         print(f"Firestore authentication failed while {action}: {detail}")
         return jsonify({
             "message": (
-                "Portfolio storage is temporarily unavailable because the "
-                "backend Firebase authentication failed."
+                "Storage is temporarily unavailable because backend "
+                "Firebase authentication failed."
             ),
             "code": "FIREBASE_AUTH_UNAVAILABLE"
         }), 503
@@ -224,6 +545,11 @@ def _sanitize_positions(raw_positions):
     if not isinstance(raw_positions, list):
         return None, "Positions must be a list."
 
+    if len(raw_positions) > MAX_PORTFOLIO_POSITIONS:
+        return None, (
+            f"A maximum of {MAX_PORTFOLIO_POSITIONS} portfolio positions is allowed."
+        )
+
     cleaned = []
     for idx, position in enumerate(raw_positions):
         if not isinstance(position, dict):
@@ -240,6 +566,8 @@ def _sanitize_positions(raw_positions):
 
         if not ticker:
             return None, f"Position at index {idx} is missing ticker."
+        if not is_valid_ticker(ticker):
+            return None, f"Position at index {idx} has invalid ticker."
         if side not in ("buy", "sell"):
             return None, f"Position at index {idx} has invalid side."
         if sizing_mode not in ("shares", "notional"):
@@ -295,27 +623,43 @@ def _get_conversion_rates(base_currency="USD"):
 def firebase_token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = None
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            if auth_header. startswith('Bearer '):
-                token = auth_header. split(" ")[1]
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"message": "Firebase ID token is missing."}), 401
 
+        token = auth_header.removeprefix("Bearer ").strip()
         if not token:
-            return jsonify({'message':  'Firebase ID Token is missing! '}), 401
+            return jsonify({"message": "Firebase ID token is missing."}), 401
+        if not firebase_admin._apps:
+            return jsonify({
+                "message": "Authentication service is temporarily unavailable."
+            }), 503
 
         try:
-            
-            unverified = jwt.decode(token, options={"verify_signature": False})
-            uid = unverified. get('user_id') or unverified. get('uid') or unverified. get('sub')
-            if uid:
-                print(f"[LOCAL] Token decoded for uid: {uid}")
-                return f(uid, *args, **kwargs)
-            else:
-                return jsonify({'message':  'Could not extract user ID from token'}), 401
-        except Exception as e:
-            return jsonify({'message': f'Token processing error: {str(e)}'}), 401
-            
+            decoded = auth.verify_id_token(token, check_revoked=True)
+        except (
+            ValueError,
+            auth.ExpiredIdTokenError,
+            auth.InvalidIdTokenError,
+            auth.RevokedIdTokenError,
+            auth.UserDisabledError,
+        ) as exc:
+            print(f"Firebase token rejected: {type(exc).__name__}")
+            return jsonify({"message": "Session expired or invalid."}), 401
+        except Exception as exc:
+            print(f"Firebase token verification failed: {exc}")
+            return jsonify({
+                "message": "Authentication service is temporarily unavailable."
+            }), 503
+
+        uid = decoded.get("uid") or decoded.get("sub")
+        if not uid:
+            return jsonify({"message": "Token does not identify a user."}), 401
+        if decoded.get("email_verified") is not True:
+            return jsonify({"message": "Verify your email address before continuing."}), 403
+
+        return f(uid, *args, **kwargs)
+
     return decorated
 
 
@@ -386,11 +730,13 @@ def get_trailing_metrics(current_user_uid):
         if e.response.status_code == 429:
             return jsonify({'error': 'Too many requests. You have been rate-limited by Yahoo Finance. Please wait a few minutes before trying again.'}), 429
         else:
-            return jsonify({'error': f'An HTTP error occurred while fetching data: {e}'}), e.response.status_code
+            print(f"Yahoo Finance HTTP error for {ticker_symbol}: {e}")
+            return jsonify({'error': 'The market data provider returned an error.'}), e.response.status_code
     except json.decoder.JSONDecodeError:
         return jsonify({'error': 'Failed to parse data from Yahoo Finance. This often indicates rate limiting or an issue with the ticker symbol. Please try again later.'}), 500
     except Exception as e:
-        return jsonify({'error': f'An unexpected error occurred while fetching or calculating data for {ticker_symbol}. Please try again later. Details: {str(e)}'}), 500
+        print(f"Trailing metrics failed for {ticker_symbol}: {e}")
+        return jsonify({'error': 'Unable to fetch trailing metrics. Please try again later.'}), 500
 
 @app.route('/get_market_price', methods=['GET'])
 @limiter.limit("60 per minute")
@@ -471,7 +817,8 @@ def get_market_price(current_user_uid):
             'history': history_data
         })
     except Exception as e:
-        return jsonify({'error': f'Error fetching price: {str(e)}'}), 500
+        print(f"Market price failed for {ticker_symbol}: {e}")
+        return jsonify({'error': 'Unable to fetch market price. Please try again later.'}), 500
 
 @app.route('/get_basic_data', methods=['GET'])
 @limiter.limit("30 per minute")
@@ -498,7 +845,8 @@ def get_basic_data(current_user_uid):
         else:
             return jsonify({'error': f'No financial data found for {ticker_symbol}'}), 400
     except Exception as e:
-        return jsonify({'error': f'An unexpected error occurred while fetching insights data for {ticker_symbol}. Details: {str(e)}'}), 500
+        print(f"Basic data failed for {ticker_symbol}: {e}")
+        return jsonify({'error': 'Unable to fetch financial data. Please try again later.'}), 500
     
 @app.route('/get_segment_data', methods=['GET'])
 @limiter.limit("30 per minute")
@@ -521,7 +869,8 @@ def get_segment_data(current_user_uid):
         else:
             return jsonify({'error': f'No segment data found for {ticker_symbol}'}), 404
     except Exception as e:
-        return jsonify({'error': f'An unexpected error occurred while fetching segment data for {ticker_symbol}. Details: {str(e)}'}), 500
+        print(f"Segment data failed for {ticker_symbol}: {e}")
+        return jsonify({'error': 'Unable to fetch segment data. Please try again later.'}), 500
 
 @app.route('/get_ttm_data', methods=['GET'])
 @limiter.limit("30 per minute")
@@ -544,7 +893,8 @@ def get_ttm_data(current_user_uid):
         else:
             return jsonify({'error': f'No TTM data found for {ticker_symbol}'}), 404
     except Exception as e:
-        return jsonify({'error': f'An unexpected error occurred while fetching TTM data for {ticker_symbol}. Details: {str(e)}'}), 500
+        print(f"TTM data failed for {ticker_symbol}: {e}")
+        return jsonify({'error': 'Unable to fetch TTM data. Please try again later.'}), 500
 
 @app.route('/get_ttm_segment_data', methods=['GET'])
 @limiter.limit("30 per minute")
@@ -567,7 +917,8 @@ def get_ttm_segment_data(current_user_uid):
         else:
             return jsonify({'error': f'No TTM segment data found for {ticker_symbol}'}), 404
     except Exception as e:
-        return jsonify({'error': f'An unexpected error occurred while fetching TTM segment data for {ticker_symbol}. Details: {str(e)}'}), 500
+        print(f"TTM segment data failed for {ticker_symbol}: {e}")
+        return jsonify({'error': 'Unable to fetch TTM segment data. Please try again later.'}), 500
 
 @app.route('/get_stock_info_data', methods=['GET'])
 @limiter.limit("30 per minute")
@@ -680,7 +1031,8 @@ def get_stock_info_data(current_user_uid):
         })
         
     except Exception as e:
-        return jsonify({'error': f'Error fetching stock info: {str(e)}'}), 500
+        print(f"Stock info failed for {ticker_symbol}: {e}")
+        return jsonify({'error': 'Unable to fetch stock information. Please try again later.'}), 500
 
 
 
@@ -725,7 +1077,8 @@ def save_calculation(current_user_uid):
         })
         return jsonify({'message': f'Calculation "{name}" for {ticker} saved successfully!'}), 200
     except Exception as e:
-        return jsonify({'message': f'Error saving calculation: {str(e)}'}), 500
+        print(f"Save calculation failed: {e}")
+        return jsonify({'message': 'Unable to save calculation.'}), 500
 
 @app.route('/load_calculations', methods=['GET'])
 @firebase_token_required 
@@ -744,8 +1097,243 @@ def load_calculations(current_user_uid):
         
         return jsonify(calculations), 200
     except Exception as e:
-        return jsonify({'message': f'Error loading calculations: {str(e)}'}), 500
+        print(f"Load calculations failed: {e}")
+        return jsonify({'message': 'Unable to load calculations.'}), 500
 
+
+
+@app.route("/watchlists", methods=["GET"])
+@limiter.limit("60 per minute")
+@firebase_token_required
+def list_watchlists(current_user_uid):
+    if not db:
+        return jsonify({"message": "Watchlist storage is unavailable."}), 503
+
+    try:
+        watchlists = [
+            _serialize_watchlist(doc) for doc in _list_watchlist_docs(current_user_uid)
+        ]
+        watchlists.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
+        return jsonify({"watchlists": watchlists}), 200
+    except Exception as exc:
+        return _firestore_error_response("load watchlists", exc)
+
+
+@app.route("/watchlists", methods=["POST"])
+@limiter.limit("30 per minute")
+@firebase_token_required
+def create_watchlist(current_user_uid):
+    if not db:
+        return jsonify({"message": "Watchlist storage is unavailable."}), 503
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required."}), 400
+
+    name, name_error = _normalize_watchlist_name(data.get("name"))
+    if name_error:
+        return jsonify({"message": name_error}), 400
+    tickers, ticker_error = _sanitize_watchlist_tickers(data.get("tickers", []))
+    if ticker_error:
+        return jsonify({"message": ticker_error}), 400
+
+    try:
+        docs = _list_watchlist_docs(current_user_uid)
+        if len(docs) >= MAX_WATCHLISTS:
+            return jsonify({
+                "message": f"A maximum of {MAX_WATCHLISTS} watchlists is allowed."
+            }), 400
+        if _find_name_conflict(docs, name):
+            return jsonify({"message": "A watchlist with this name already exists."}), 409
+
+        now = _utc_now()
+        payload = {
+            "name": name,
+            "tickers": tickers,
+            "createdAt": firestore.SERVER_TIMESTAMP,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }
+        doc_ref = _watchlists_ref(current_user_uid).document()
+        doc_ref.set(payload)
+        response_payload = {
+            **payload,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        return jsonify(_serialize_watchlist(doc_ref.id, response_payload)), 201
+    except Exception as exc:
+        return _firestore_error_response("create watchlist", exc)
+
+
+@app.route("/watchlists/<string:watchlist_id>", methods=["PATCH"])
+@limiter.limit("60 per minute")
+@firebase_token_required
+def update_watchlist(current_user_uid, watchlist_id):
+    if not db:
+        return jsonify({"message": "Watchlist storage is unavailable."}), 503
+    if not _valid_watchlist_id(watchlist_id):
+        return jsonify({"message": "Invalid watchlist ID."}), 400
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not ({"name", "tickers"} & set(data)):
+        return jsonify({"message": "Provide a name or tickers to update."}), 400
+
+    try:
+        docs = _list_watchlist_docs(current_user_uid)
+        current_doc = next((doc for doc in docs if doc.id == watchlist_id), None)
+        if current_doc is None:
+            return jsonify({"message": "Watchlist not found."}), 404
+
+        current = current_doc.to_dict() or {}
+        name = current.get("name", "")
+        tickers = current.get("tickers", [])
+
+        if "name" in data:
+            name, name_error = _normalize_watchlist_name(data.get("name"))
+            if name_error:
+                return jsonify({"message": name_error}), 400
+            if _find_name_conflict(docs, name, ignored_id=watchlist_id):
+                return jsonify({
+                    "message": "A watchlist with this name already exists."
+                }), 409
+
+        if "tickers" in data:
+            tickers, ticker_error = _sanitize_watchlist_tickers(data.get("tickers"))
+            if ticker_error:
+                return jsonify({"message": ticker_error}), 400
+
+        now = _utc_now()
+        current_doc.reference.update({
+            "name": name,
+            "tickers": tickers,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        })
+        payload = {
+            **current,
+            "name": name,
+            "tickers": tickers,
+            "updatedAt": now,
+        }
+        return jsonify(_serialize_watchlist(watchlist_id, payload)), 200
+    except Exception as exc:
+        return _firestore_error_response("update watchlist", exc)
+
+
+@app.route("/watchlists/<string:watchlist_id>/tickers", methods=["POST"])
+@limiter.limit("30 per minute")
+@firebase_token_required
+def merge_watchlist_tickers(current_user_uid, watchlist_id):
+    if not db:
+        return jsonify({"message": "Watchlist storage is unavailable."}), 503
+    if not _valid_watchlist_id(watchlist_id):
+        return jsonify({"message": "Invalid watchlist ID."}), 400
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required."}), 400
+    incoming, ticker_error = _sanitize_watchlist_tickers(
+        data.get("tickers"), require_nonempty=True
+    )
+    if ticker_error:
+        return jsonify({"message": ticker_error}), 400
+
+    doc_ref = _watchlists_ref(current_user_uid).document(watchlist_id)
+    transaction = db.transaction()
+
+    @firestore.transactional
+    def merge_in_transaction(transaction):
+        snapshot = doc_ref.get(transaction=transaction)
+        if not snapshot.exists:
+            return None
+
+        current = snapshot.to_dict() or {}
+        existing = _normalize_tickers(current.get("tickers", []), deduplicate=True)
+        existing_set = set(existing)
+        added = [symbol for symbol in incoming if symbol not in existing_set]
+        merged = existing + added
+        if len(merged) > MAX_WATCHLIST_TICKERS:
+            raise ValueError("WATCHLIST_TICKER_LIMIT")
+
+        transaction.update(doc_ref, {
+            "tickers": merged,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        })
+        return current, merged, added
+
+    try:
+        result = merge_in_transaction(transaction)
+        if result is None:
+            return jsonify({"message": "Watchlist not found."}), 404
+
+        current, merged, added = result
+        payload = {
+            **current,
+            "tickers": merged,
+            "updatedAt": _utc_now(),
+        }
+        return jsonify({
+            "watchlist": _serialize_watchlist(watchlist_id, payload),
+            "addedCount": len(added),
+            "skippedCount": len(incoming) - len(added),
+        }), 200
+    except ValueError as exc:
+        if str(exc) == "WATCHLIST_TICKER_LIMIT":
+            return jsonify({
+                "message": (
+                    f"The merged watchlist would exceed {MAX_WATCHLIST_TICKERS} tickers."
+                )
+            }), 400
+        print(f"Unexpected watchlist merge validation error: {exc}")
+        return jsonify({"message": "Unable to merge watchlist tickers."}), 500
+    except Exception as exc:
+        return _firestore_error_response("merge watchlist tickers", exc)
+
+
+@app.route("/watchlists/<string:watchlist_id>", methods=["DELETE"])
+@limiter.limit("30 per minute")
+@firebase_token_required
+def delete_watchlist(current_user_uid, watchlist_id):
+    if not db:
+        return jsonify({"message": "Watchlist storage is unavailable."}), 503
+    if not _valid_watchlist_id(watchlist_id):
+        return jsonify({"message": "Invalid watchlist ID."}), 400
+
+    try:
+        doc_ref = _watchlists_ref(current_user_uid).document(watchlist_id)
+        if not doc_ref.get().exists:
+            return jsonify({"message": "Watchlist not found."}), 404
+        doc_ref.delete()
+        return "", 204
+    except Exception as exc:
+        return _firestore_error_response("delete watchlist", exc)
+
+
+@app.route("/watchlists/performance", methods=["POST"])
+@limiter.limit("20 per minute")
+@firebase_token_required
+def get_watchlist_performance(current_user_uid):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required."}), 400
+
+    tickers, ticker_error = _sanitize_watchlist_tickers(
+        data.get("tickers"), require_nonempty=True
+    )
+    if ticker_error:
+        return jsonify({"message": ticker_error}), 400
+
+    histories = _load_adjusted_close_history(
+        tickers, force=data.get("force") is True
+    )
+    results = [
+        _calculate_performance(symbol, histories.get(symbol))
+        for symbol in tickers
+    ]
+    return jsonify({
+        "requestedAt": _utc_now().isoformat(),
+        "periods": ["1W", "1M", "3M", "6M", "YTD", "1Y"],
+        "results": results,
+    }), 200
 
 @app.route('/portfolio/save', methods=['POST'])
 @limiter.limit("60 per minute")
@@ -818,6 +1406,9 @@ def get_portfolio_current_prices(current_user_uid):
         return jsonify({
             'message': f'A maximum of {MAX_PORTFOLIO_TICKERS} tickers is allowed.'
         }), 400
+    invalid = [symbol for symbol in normalized_tickers if not is_valid_ticker(symbol)]
+    if invalid:
+        return jsonify({'message': f'Invalid ticker symbol: {invalid[0]}.'}), 400
 
     prices, quote_timestamps = list_current_price(normalized_tickers)
 
@@ -841,9 +1432,11 @@ def get_portfolio_conversion_rates(current_user_uid):
         payload = _get_conversion_rates(base_currency)
         return jsonify(payload), 200
     except requests.exceptions.RequestException as e:
-        return jsonify({'message': f'Failed to fetch conversion rates: {str(e)}'}), 502
+        print(f"Conversion rate provider failed: {e}")
+        return jsonify({'message': 'Failed to fetch conversion rates.'}), 502
     except Exception as e:
-        return jsonify({'message': f'Conversion rate processing error: {str(e)}'}), 500
+        print(f"Conversion rate processing failed: {e}")
+        return jsonify({'message': 'Unable to process conversion rates.'}), 500
 
 @app.route('/delete_calculation/<string:calc_id>', methods=['DELETE'])
 @firebase_token_required 
@@ -858,7 +1451,8 @@ def delete_calculation(current_user_uid, calc_id):
         doc_ref.delete()
         return jsonify({'message': f'Calculation "{calc_id}" deleted successfully!'}), 200
     except Exception as e:
-        return jsonify({'message': f'Error deleting calculation: {str(e)}'}), 500
+        print(f"Delete calculation failed: {e}")
+        return jsonify({'message': 'Unable to delete calculation.'}), 500
 
 @app.route('/get_tickers', methods=['GET'])
 @firebase_token_required
