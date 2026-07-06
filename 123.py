@@ -116,6 +116,8 @@ PRICE_CACHE_TTL_SECONDS = 60
 PRICE_FAILURE_CACHE_TTL_SECONDS = 15
 MAX_PORTFOLIO_TICKERS = 50
 MAX_PORTFOLIO_POSITIONS = 200
+MAX_PORTFOLIOS = 20
+MAX_PORTFOLIO_NAME_LENGTH = 60
 MAX_WATCHLISTS = 20
 MAX_WATCHLIST_TICKERS = 50
 MAX_WATCHLIST_NAME_LENGTH = 60
@@ -125,6 +127,8 @@ PORTFOLIO_LOAD_TIMEOUT_SECONDS = 15
 HISTORY_CACHE_TTL_SECONDS = 5 * 60
 HISTORY_FAILURE_CACHE_TTL_SECONDS = 60
 WATCHLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+PORTFOLIO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+PORTFOLIO_SETTINGS_DOC = "_settings"
 
 def load_tickers_to_cache():
     global _ticker_cache
@@ -597,6 +601,110 @@ def _sanitize_positions(raw_positions):
         })
 
     return cleaned, None
+
+
+def _normalize_portfolio_name(value):
+    name = " ".join(str(value or "").split())
+    if not name:
+        return None, "Portfolio name is required."
+    if len(name) > MAX_PORTFOLIO_NAME_LENGTH:
+        return None, (
+            f"Portfolio name must be {MAX_PORTFOLIO_NAME_LENGTH} characters or fewer."
+        )
+    return name, None
+
+
+def _valid_portfolio_id(portfolio_id):
+    value = str(portfolio_id or "")
+    return value != PORTFOLIO_SETTINGS_DOC and bool(PORTFOLIO_ID_PATTERN.fullmatch(value))
+
+
+def _portfolios_ref(uid):
+    return db.collection("users").document(uid).collection("portfolio")
+
+
+def _list_portfolio_docs(uid):
+    return [
+        doc for doc in _portfolios_ref(uid).stream()
+        if doc.id != PORTFOLIO_SETTINGS_DOC
+    ]
+
+
+def _portfolio_name(doc_id, payload):
+    fallback = "Core portfolio" if doc_id == "default" else "Untitled portfolio"
+    return str(payload.get("name") or fallback)
+
+
+def _serialize_portfolio_summary(doc_or_id, payload=None):
+    if payload is None:
+        payload = doc_or_id.to_dict() or {}
+        portfolio_id = doc_or_id.id
+    else:
+        portfolio_id = str(doc_or_id)
+    positions = payload.get("positions")
+    return {
+        "id": portfolio_id,
+        "name": _portfolio_name(portfolio_id, payload),
+        "positionCount": len(positions) if isinstance(positions, list) else 0,
+        "baseCurrency": str(payload.get("baseCurrency", "USD")).upper(),
+        "createdAt": _iso_timestamp(payload.get("createdAt")),
+        "updatedAt": _iso_timestamp(payload.get("updatedAt")),
+    }
+
+
+def _ensure_portfolio_docs(uid):
+    docs = _list_portfolio_docs(uid)
+    if docs:
+        return docs
+    ref = _portfolios_ref(uid).document("default")
+    ref.set({
+        "name": "Core portfolio",
+        "positions": [],
+        "baseCurrency": "USD",
+        "createdAt": firestore.SERVER_TIMESTAMP,
+        "updatedAt": firestore.SERVER_TIMESTAMP,
+    })
+    _portfolios_ref(uid).document(PORTFOLIO_SETTINGS_DOC).set({
+        "activePortfolioId": "default"
+    }, merge=True)
+    return _list_portfolio_docs(uid)
+
+
+def _active_portfolio_id(uid, docs):
+    ids = {doc.id for doc in docs}
+    settings_ref = _portfolios_ref(uid).document(PORTFOLIO_SETTINGS_DOC)
+    settings = settings_ref.get()
+    active_id = (settings.to_dict() or {}).get("activePortfolioId") if settings.exists else None
+    if active_id not in ids:
+        active_id = "default" if "default" in ids else docs[0].id
+        settings_ref.set({"activePortfolioId": active_id}, merge=True)
+    return active_id
+
+
+def _portfolio_name_conflict(docs, name, ignored_id=None):
+    key = name.casefold()
+    return next((
+        doc for doc in docs
+        if doc.id != ignored_id
+        and _portfolio_name(doc.id, doc.to_dict() or {}).casefold() == key
+    ), None)
+
+
+def _ticker_metadata_for_positions(positions):
+    wanted = {
+        str(position.get("ticker", "")).strip().upper()
+        for position in positions if isinstance(position, dict)
+    }
+    return {
+        str(item.get("symbol", "")).strip().upper(): {
+            "name": item.get("name"),
+            "exchange": item.get("exchange"),
+            "sector": item.get("sector"),
+            "industry": item.get("industry"),
+        }
+        for item in _ticker_cache
+        if str(item.get("symbol", "")).strip().upper() in wanted
+    }
 
 
 def _get_conversion_rates(base_currency="USD"):
@@ -1335,6 +1443,155 @@ def get_watchlist_performance(current_user_uid):
         "results": results,
     }), 200
 
+@app.route("/portfolios", methods=["GET"])
+@limiter.limit("60 per minute")
+@firebase_token_required
+def list_portfolios(current_user_uid):
+    if not db:
+        return jsonify({"message": "Portfolio storage is unavailable."}), 503
+    try:
+        docs = _ensure_portfolio_docs(current_user_uid)
+        active_id = _active_portfolio_id(current_user_uid, docs)
+        portfolios = [_serialize_portfolio_summary(doc) for doc in docs]
+        portfolios.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
+        return jsonify({
+            "portfolios": portfolios,
+            "activePortfolioId": active_id,
+        }), 200
+    except Exception as exc:
+        return _firestore_error_response("load portfolios", exc)
+
+
+@app.route("/portfolios", methods=["POST"])
+@limiter.limit("30 per minute")
+@firebase_token_required
+def create_portfolio(current_user_uid):
+    if not db:
+        return jsonify({"message": "Portfolio storage is unavailable."}), 503
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required."}), 400
+    name, name_error = _normalize_portfolio_name(data.get("name"))
+    if name_error:
+        return jsonify({"message": name_error}), 400
+    try:
+        docs = _list_portfolio_docs(current_user_uid)
+        if len(docs) >= MAX_PORTFOLIOS:
+            return jsonify({
+                "message": f"A maximum of {MAX_PORTFOLIOS} portfolios is allowed."
+            }), 400
+        if _portfolio_name_conflict(docs, name):
+            return jsonify({"message": "A portfolio with this name already exists."}), 409
+        now = _utc_now()
+        payload = {
+            "name": name,
+            "positions": [],
+            "baseCurrency": "USD",
+            "createdAt": firestore.SERVER_TIMESTAMP,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }
+        doc_ref = _portfolios_ref(current_user_uid).document()
+        doc_ref.set(payload)
+        _portfolios_ref(current_user_uid).document(PORTFOLIO_SETTINGS_DOC).set({
+            "activePortfolioId": doc_ref.id
+        }, merge=True)
+        response_payload = {
+            **payload,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        return jsonify({
+            "portfolio": _serialize_portfolio_summary(doc_ref.id, response_payload),
+            "activePortfolioId": doc_ref.id,
+        }), 201
+    except Exception as exc:
+        return _firestore_error_response("create portfolio", exc)
+
+
+@app.route("/portfolios/<string:portfolio_id>", methods=["PATCH"])
+@limiter.limit("60 per minute")
+@firebase_token_required
+def update_portfolio(current_user_uid, portfolio_id):
+    if not db:
+        return jsonify({"message": "Portfolio storage is unavailable."}), 503
+    if not _valid_portfolio_id(portfolio_id):
+        return jsonify({"message": "Invalid portfolio ID."}), 400
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or "name" not in data:
+        return jsonify({"message": "Provide a portfolio name."}), 400
+    name, name_error = _normalize_portfolio_name(data.get("name"))
+    if name_error:
+        return jsonify({"message": name_error}), 400
+    try:
+        docs = _list_portfolio_docs(current_user_uid)
+        current_doc = next((doc for doc in docs if doc.id == portfolio_id), None)
+        if current_doc is None:
+            return jsonify({"message": "Portfolio not found."}), 404
+        if _portfolio_name_conflict(docs, name, ignored_id=portfolio_id):
+            return jsonify({"message": "A portfolio with this name already exists."}), 409
+        current = current_doc.to_dict() or {}
+        current_doc.reference.update({
+            "name": name,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        })
+        return jsonify(_serialize_portfolio_summary(portfolio_id, {
+            **current,
+            "name": name,
+            "updatedAt": _utc_now(),
+        })), 200
+    except Exception as exc:
+        return _firestore_error_response("rename portfolio", exc)
+
+
+@app.route("/portfolios/<string:portfolio_id>", methods=["DELETE"])
+@limiter.limit("30 per minute")
+@firebase_token_required
+def delete_portfolio(current_user_uid, portfolio_id):
+    if not db:
+        return jsonify({"message": "Portfolio storage is unavailable."}), 503
+    if not _valid_portfolio_id(portfolio_id):
+        return jsonify({"message": "Invalid portfolio ID."}), 400
+    try:
+        docs = _list_portfolio_docs(current_user_uid)
+        current_doc = next((doc for doc in docs if doc.id == portfolio_id), None)
+        if current_doc is None:
+            return jsonify({"message": "Portfolio not found."}), 404
+        if len(docs) <= 1:
+            return jsonify({"message": "At least one portfolio must remain."}), 409
+        active_id = _active_portfolio_id(current_user_uid, docs)
+        remaining = [doc for doc in docs if doc.id != portfolio_id]
+        next_active_id = active_id if active_id != portfolio_id else (
+            "default" if any(doc.id == "default" for doc in remaining) else remaining[0].id
+        )
+        current_doc.reference.delete()
+        _portfolios_ref(current_user_uid).document(PORTFOLIO_SETTINGS_DOC).set({
+            "activePortfolioId": next_active_id
+        }, merge=True)
+        return jsonify({"activePortfolioId": next_active_id}), 200
+    except Exception as exc:
+        return _firestore_error_response("delete portfolio", exc)
+
+
+@app.route("/portfolios/<string:portfolio_id>/activate", methods=["POST"])
+@limiter.limit("60 per minute")
+@firebase_token_required
+def activate_portfolio(current_user_uid, portfolio_id):
+    if not db:
+        return jsonify({"message": "Portfolio storage is unavailable."}), 503
+    if not _valid_portfolio_id(portfolio_id):
+        return jsonify({"message": "Invalid portfolio ID."}), 400
+    try:
+        doc_ref = _portfolios_ref(current_user_uid).document(portfolio_id)
+        if not doc_ref.get().exists:
+            return jsonify({"message": "Portfolio not found."}), 404
+        _portfolios_ref(current_user_uid).document(PORTFOLIO_SETTINGS_DOC).set({
+            "activePortfolioId": portfolio_id
+        }, merge=True)
+        return jsonify({"activePortfolioId": portfolio_id}), 200
+    except Exception as exc:
+        return _firestore_error_response("activate portfolio", exc)
+
+
 @app.route('/portfolio/save', methods=['POST'])
 @limiter.limit("60 per minute")
 @firebase_token_required
@@ -1343,9 +1600,12 @@ def save_portfolio(current_user_uid):
         return jsonify({'message': 'Database not configured, cannot save portfolio.'}), 500
 
     data = request.get_json(silent=True) or {}
+    portfolio_id = str(data.get("portfolioId", "")).strip()
     positions = data.get("positions", [])
     base_currency = str(data.get("baseCurrency", "USD")).strip().upper()
 
+    if not _valid_portfolio_id(portfolio_id):
+        return jsonify({'message': 'A valid portfolioId is required.'}), 400
     cleaned_positions, validation_error = _sanitize_positions(positions)
     if validation_error:
         return jsonify({'message': validation_error}), 400
@@ -1353,15 +1613,22 @@ def save_portfolio(current_user_uid):
         return jsonify({'message': 'Invalid baseCurrency.'}), 400
 
     try:
-        doc_ref = db.collection('users').document(current_user_uid).collection('portfolio').document('default')
-        doc_ref.set({
+        doc_ref = _portfolios_ref(current_user_uid).document(portfolio_id)
+        snapshot = doc_ref.get()
+        if not snapshot.exists:
+            return jsonify({'message': 'Portfolio not found.'}), 404
+        doc_ref.update({
             'positions': cleaned_positions,
             'baseCurrency': base_currency,
             'updatedAt': firestore.SERVER_TIMESTAMP
         })
-        return jsonify({'message': 'Portfolio saved successfully.', 'count': len(cleaned_positions)}), 200
-    except Exception as e:
-        return _firestore_error_response("save portfolio", e)
+        return jsonify({
+            'message': 'Portfolio saved successfully.',
+            'portfolioId': portfolio_id,
+            'count': len(cleaned_positions)
+        }), 200
+    except Exception as exc:
+        return _firestore_error_response("save portfolio", exc)
 
 
 @app.route('/portfolio/load', methods=['GET'])
@@ -1371,12 +1638,15 @@ def load_portfolio(current_user_uid):
     if not db:
         return jsonify({'message': 'Database not configured, cannot load portfolio.'}), 500
 
+    requested_id = str(request.args.get("portfolioId", "")).strip()
+    if requested_id and not _valid_portfolio_id(requested_id):
+        return jsonify({'message': 'Invalid portfolioId.'}), 400
     try:
-        doc_ref = db.collection('users').document(current_user_uid).collection('portfolio').document('default')
-        doc = doc_ref.get(timeout=PORTFOLIO_LOAD_TIMEOUT_SECONDS)
-
-        if not doc.exists:
-            return jsonify({'positions': [], 'baseCurrency': 'USD'}), 200
+        docs = _ensure_portfolio_docs(current_user_uid)
+        portfolio_id = requested_id or _active_portfolio_id(current_user_uid, docs)
+        doc = next((item for item in docs if item.id == portfolio_id), None)
+        if doc is None:
+            return jsonify({'message': 'Portfolio not found.'}), 404
 
         payload = doc.to_dict() or {}
         positions = payload.get('positions') if isinstance(payload.get('positions'), list) else []
@@ -1384,9 +1654,15 @@ def load_portfolio(current_user_uid):
         if len(base_currency) != 3:
             base_currency = 'USD'
 
-        return jsonify({'positions': positions, 'baseCurrency': base_currency}), 200
-    except Exception as e:
-        return _firestore_error_response("load portfolio", e)
+        return jsonify({
+            'portfolioId': portfolio_id,
+            'name': _portfolio_name(portfolio_id, payload),
+            'positions': positions,
+            'baseCurrency': base_currency,
+            'tickerMetadata': _ticker_metadata_for_positions(positions),
+        }), 200
+    except Exception as exc:
+        return _firestore_error_response("load portfolio", exc)
 
 
 @app.route('/portfolio/current-prices', methods=['POST'])
