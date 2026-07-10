@@ -641,15 +641,20 @@ def _serialize_portfolio_summary(doc_or_id, payload=None):
         portfolio_id = doc_or_id.id
     else:
         portfolio_id = str(doc_or_id)
-    positions = payload.get("positions")
     return {
         "id": portfolio_id,
         "name": _portfolio_name(portfolio_id, payload),
-        "positionCount": len(positions) if isinstance(positions, list) else 0,
+        "positionCount": max(0, int(payload.get("positionCount") or 0)),
         "baseCurrency": str(payload.get("baseCurrency", "USD")).upper(),
         "createdAt": _iso_timestamp(payload.get("createdAt")),
         "updatedAt": _iso_timestamp(payload.get("updatedAt")),
     }
+
+
+def _list_portfolio_summary_docs(uid):
+    return list(_portfolios_ref(uid).select([
+        "name", "baseCurrency", "positionCount", "createdAt", "updatedAt",
+    ]).stream())
 
 
 def _serialize_portfolio_detail(doc):
@@ -672,11 +677,19 @@ def _serialize_portfolio_detail(doc):
 def _ensure_portfolio_docs(uid):
     docs = _list_portfolio_docs(uid)
     if docs:
+        for doc in docs:
+            payload = doc.to_dict() or {}
+            if "positionCount" not in payload:
+                positions = payload.get("positions")
+                doc.reference.update({
+                    "positionCount": len(positions) if isinstance(positions, list) else 0,
+                })
         return docs
     ref = _portfolios_ref(uid).document("default")
     ref.set({
         "name": "Core portfolio",
         "positions": [],
+        "positionCount": 0,
         "baseCurrency": "USD",
         "createdAt": firestore.SERVER_TIMESTAMP,
         "updatedAt": firestore.SERVER_TIMESTAMP,
@@ -1473,7 +1486,7 @@ def list_portfolios(current_user_uid):
     try:
         docs = _ensure_portfolio_docs(current_user_uid)
         active_id = _active_portfolio_id(current_user_uid, docs)
-        portfolios = [_serialize_portfolio_summary(doc) for doc in docs]
+        portfolios = [_serialize_portfolio_summary(doc) for doc in _list_portfolio_summary_docs(current_user_uid)]
         portfolios.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
         return jsonify({
             "portfolios": portfolios,
@@ -1492,10 +1505,10 @@ def bootstrap_portfolio(current_user_uid):
     try:
         docs = _ensure_portfolio_docs(current_user_uid)
         active_id = _active_portfolio_id(current_user_uid, docs)
-        active_doc = next((doc for doc in docs if doc.id == active_id), None)
-        if active_doc is None:
+        active_doc = _portfolios_ref(current_user_uid).document(active_id).get()
+        if not active_doc.exists:
             return jsonify({"message": "Active portfolio not found."}), 404
-        portfolios = [_serialize_portfolio_summary(doc) for doc in docs]
+        portfolios = [_serialize_portfolio_summary(doc) for doc in _list_portfolio_summary_docs(current_user_uid)]
         portfolios.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
         return jsonify({
             "portfolios": portfolios,
@@ -1530,6 +1543,7 @@ def create_portfolio(current_user_uid):
         payload = {
             "name": name,
             "positions": [],
+            "positionCount": 0,
             "baseCurrency": "USD",
             "createdAt": firestore.SERVER_TIMESTAMP,
             "updatedAt": firestore.SERVER_TIMESTAMP,
@@ -1674,6 +1688,7 @@ def save_portfolio(current_user_uid):
             next_revision = current_revision + 1
             transaction.update(doc_ref, {
                 'positions': cleaned_positions,
+                'positionCount': len(cleaned_positions),
                 'baseCurrency': base_currency,
                 'revision': next_revision,
                 'updatedAt': firestore.SERVER_TIMESTAMP,
