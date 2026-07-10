@@ -947,6 +947,7 @@ def get_trailing_metrics(current_user_uid):
 @firebase_token_required
 def get_market_price(current_user_uid):
     ticker_symbol = request.args.get('ticker')
+    include_history = request.args.get('include', '').lower() == 'history'
     if not ticker_symbol:
         return jsonify({'error': 'Ticker symbol is required'}), 400
     
@@ -989,27 +990,23 @@ def get_market_price(current_user_uid):
         history_data = []
         year_change_pct = None
         
-        try:
-            df = ticker.history(period="1y", interval="1d")
-            if len(df) >= 2:
-                # Daily change from last 2 days
-                prev_close = df['Close'].iloc[-2]
-                current_price_hist = df['Close'].iloc[-1]
-                change = current_price_hist - prev_close
-                pct_change = (change / prev_close) * 100
-                
-                # 1-year 
-                first_price = df['Close'].iloc[0]
-                year_change_pct = ((current_price_hist - first_price) / first_price) * 100
-                
-                # Format history data 
-                for date, row in df.iterrows():
-                    history_data.append({
-                        'date': date.strftime('%m/%d/%Y'),
-                        'price': round(row['Close'], 2)
-                    })
-        except Exception:
-            pass  
+        if include_history:
+            try:
+                df = ticker.history(period="1y", interval="1d")
+                if len(df) >= 2:
+                    prev_close = df['Close'].iloc[-2]
+                    current_price_hist = df['Close'].iloc[-1]
+                    change = current_price_hist - prev_close
+                    pct_change = (change / prev_close) * 100
+                    first_price = df['Close'].iloc[0]
+                    year_change_pct = ((current_price_hist - first_price) / first_price) * 100
+                    for date, row in df.iterrows():
+                        history_data.append({
+                            'date': date.strftime('%m/%d/%Y'),
+                            'price': round(row['Close'], 2)
+                        })
+            except Exception:
+                pass
         
         return jsonify({
             'ticker': ticker_symbol,
