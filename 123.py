@@ -1420,9 +1420,8 @@ def update_watchlist(current_user_uid, watchlist_id):
         return jsonify({"message": "Provide a name or tickers to update."}), 400
 
     try:
-        docs = _list_watchlist_docs(current_user_uid)
-        current_doc = next((doc for doc in docs if doc.id == watchlist_id), None)
-        if current_doc is None:
+        current_doc = _watchlists_ref(current_user_uid).document(watchlist_id).get()
+        if not current_doc.exists:
             return jsonify({"message": "Watchlist not found."}), 404
 
         current = current_doc.to_dict() or {}
@@ -1433,7 +1432,9 @@ def update_watchlist(current_user_uid, watchlist_id):
             name, name_error = _normalize_watchlist_name(data.get("name"))
             if name_error:
                 return jsonify({"message": name_error}), 400
-            if _find_name_conflict(docs, name, ignored_id=watchlist_id):
+            same_name = list(_watchlists_ref(current_user_uid)
+                .where("name", "==", name).limit(1).stream())
+            if same_name and same_name[0].id != watchlist_id:
                 return jsonify({
                     "message": "A watchlist with this name already exists."
                 }), 409
