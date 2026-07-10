@@ -1002,6 +1002,37 @@ def get_basic_data(current_user_uid):
     except Exception as e:
         print(f"Basic data failed for {ticker_symbol}: {e}")
         return jsonify({'error': 'Unable to fetch financial data. Please try again later.'}), 500
+
+
+@app.route('/financial-filings', methods=['GET'])
+@limiter.limit("30 per minute")
+@firebase_token_required
+def get_financial_filings(current_user_uid):
+    ticker_symbol = str(request.args.get('ticker', '')).upper().strip()
+    if not ticker_symbol:
+        return jsonify({'message': 'Ticker symbol is required'}), 400
+    if not is_valid_ticker(ticker_symbol):
+        return jsonify({'message': 'Invalid ticker symbol'}), 400
+
+    def section(collection, transform=lambda value: value):
+        try:
+            value = get_financials_from_firestore(ticker_symbol, collection)
+            if not value:
+                return {'available': False, 'data': None}
+            return {'available': True, 'data': transform(value)}
+        except Exception as exc:
+            print(f"Financial filings section {collection} failed for {ticker_symbol}: {exc}")
+            return {'available': False, 'data': None}
+
+    sections = {
+        'basic': section('extracted_data', lambda value: list(value.values()) if isinstance(value, dict) else value),
+        'segment': section('segment_data'),
+        'ttm': section('ttm_data', lambda value: list(value.values()) if isinstance(value, dict) else value),
+        'ttmSegment': section('ttm_segment_data'),
+    }
+    if not sections['basic']['available']:
+        return jsonify({'message': f'No financial data found for {ticker_symbol}', 'sections': sections}), 404
+    return jsonify({'ticker': ticker_symbol, 'sections': sections}), 200
     
 @app.route('/get_segment_data', methods=['GET'])
 @limiter.limit("30 per minute")
