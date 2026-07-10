@@ -707,12 +707,16 @@ def _ticker_metadata_for_positions(positions):
     }
 
 
-def _get_conversion_rates(base_currency="USD"):
+def _get_conversion_rates(base_currency="USD", force_refresh=False):
     base = str(base_currency or "USD").strip().upper()
     now = time.time()
     cached = _fx_cache.get(base)
 
-    if cached and (now - cached.get("timestamp", 0) < FX_CACHE_TTL_SECONDS):
+    if (
+        not force_refresh
+        and cached
+        and (now - cached.get("timestamp", 0) < FX_CACHE_TTL_SECONDS)
+    ):
         return cached["payload"]
 
     response = requests.get(f"https://api.frankfurter.dev/v1/latest?base={base}", timeout=10)
@@ -1701,11 +1705,12 @@ def get_portfolio_current_prices(current_user_uid):
 @firebase_token_required
 def get_portfolio_conversion_rates(current_user_uid):
     base_currency = str(request.args.get("base", "USD")).strip().upper()
+    force_refresh = str(request.args.get("refresh", "")).strip().lower() in {"1", "true", "yes"}
     if len(base_currency) != 3:
         return jsonify({'message': 'Invalid base currency.'}), 400
 
     try:
-        payload = _get_conversion_rates(base_currency)
+        payload = _get_conversion_rates(base_currency, force_refresh=force_refresh)
         return jsonify(payload), 200
     except requests.exceptions.RequestException as e:
         print(f"Conversion rate provider failed: {e}")
