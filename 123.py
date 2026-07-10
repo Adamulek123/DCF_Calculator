@@ -652,6 +652,23 @@ def _serialize_portfolio_summary(doc_or_id, payload=None):
     }
 
 
+def _serialize_portfolio_detail(doc):
+    payload = doc.to_dict() or {}
+    positions = payload.get('positions') if isinstance(payload.get('positions'), list) else []
+    base_currency = str(payload.get('baseCurrency', 'USD')).strip().upper()
+    if len(base_currency) != 3:
+        base_currency = 'USD'
+    return {
+        'portfolioId': doc.id,
+        'name': _portfolio_name(doc.id, payload),
+        'positions': positions,
+        'baseCurrency': base_currency,
+        'tickerMetadata': _ticker_metadata_for_positions(positions),
+        'revision': int(payload.get('revision') or 0),
+        'updatedAt': _iso_timestamp(payload.get('updatedAt')),
+    }
+
+
 def _ensure_portfolio_docs(uid):
     docs = _list_portfolio_docs(uid)
     if docs:
@@ -1466,6 +1483,29 @@ def list_portfolios(current_user_uid):
         return _firestore_error_response("load portfolios", exc)
 
 
+@app.route("/portfolio/bootstrap", methods=["GET"])
+@limiter.limit("60 per minute")
+@firebase_token_required
+def bootstrap_portfolio(current_user_uid):
+    if not db:
+        return jsonify({"message": "Portfolio storage is unavailable."}), 503
+    try:
+        docs = _ensure_portfolio_docs(current_user_uid)
+        active_id = _active_portfolio_id(current_user_uid, docs)
+        active_doc = next((doc for doc in docs if doc.id == active_id), None)
+        if active_doc is None:
+            return jsonify({"message": "Active portfolio not found."}), 404
+        portfolios = [_serialize_portfolio_summary(doc) for doc in docs]
+        portfolios.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
+        return jsonify({
+            "portfolios": portfolios,
+            "activePortfolioId": active_id,
+            "activePortfolio": _serialize_portfolio_detail(active_doc),
+        }), 200
+    except Exception as exc:
+        return _firestore_error_response("bootstrap portfolio", exc)
+
+
 @app.route("/portfolios", methods=["POST"])
 @limiter.limit("30 per minute")
 @firebase_token_required
@@ -1675,21 +1715,7 @@ def load_portfolio(current_user_uid):
         if doc is None:
             return jsonify({'message': 'Portfolio not found.'}), 404
 
-        payload = doc.to_dict() or {}
-        positions = payload.get('positions') if isinstance(payload.get('positions'), list) else []
-        base_currency = str(payload.get('baseCurrency', 'USD')).strip().upper()
-        if len(base_currency) != 3:
-            base_currency = 'USD'
-
-        return jsonify({
-            'portfolioId': portfolio_id,
-            'name': _portfolio_name(portfolio_id, payload),
-            'positions': positions,
-            'baseCurrency': base_currency,
-            'tickerMetadata': _ticker_metadata_for_positions(positions),
-            'revision': int(payload.get('revision') or 0),
-            'updatedAt': _iso_timestamp(payload.get('updatedAt')),
-        }), 200
+        return jsonify(_serialize_portfolio_detail(doc)), 200
     except Exception as exc:
         return _firestore_error_response("load portfolio", exc)
 
