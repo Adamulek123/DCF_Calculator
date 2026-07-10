@@ -110,11 +110,28 @@ _ticker_cache = []
 _fx_cache = {}
 _price_cache = {}
 _history_cache = {}
+_yahoo_info_cache = {}
 _price_cache_lock = Lock()
 _history_cache_lock = Lock()
+_yahoo_info_cache_lock = Lock()
 FX_CACHE_TTL_SECONDS = 6 * 60 * 60
 PRICE_CACHE_TTL_SECONDS = 60
 PRICE_FAILURE_CACHE_TTL_SECONDS = 15
+YAHOO_INFO_CACHE_TTL_SECONDS = 5 * 60
+
+
+def _get_yahoo_info(symbol):
+    key = str(symbol or "").upper().strip()
+    now = time.time()
+    with _yahoo_info_cache_lock:
+        cached = _yahoo_info_cache.get(key)
+        if cached and now - cached["timestamp"] < YAHOO_INFO_CACHE_TTL_SECONDS:
+            return dict(cached["data"])
+    info = yf.Ticker(key).info
+    info = info if isinstance(info, dict) else {}
+    with _yahoo_info_cache_lock:
+        _yahoo_info_cache[key] = {"data": dict(info), "timestamp": now}
+    return info
 MAX_PORTFOLIO_TICKERS = 50
 MAX_PORTFOLIO_POSITIONS = 200
 MAX_PORTFOLIOS = 20
@@ -830,7 +847,7 @@ def get_trailing_metrics(current_user_uid):
     try:
         time.sleep(0.5)
         ticker = yf.Ticker(ticker_symbol)
-        info = ticker.info
+        info = _get_yahoo_info(ticker_symbol)
 
         if not info or 'regularMarketPrice' not in info:
             return jsonify({'error': f'Could not find comprehensive information for ticker: {ticker_symbol}. It might be invalid or delisted.'}), 404
@@ -905,7 +922,7 @@ def get_market_price(current_user_uid):
         ticker = yf.Ticker(ticker_symbol)
         info = {}
         try:
-            fetched_info = ticker.info
+            fetched_info = _get_yahoo_info(ticker_symbol)
             if isinstance(fetched_info, dict):
                 info = fetched_info
         except Exception as e:
@@ -1118,7 +1135,7 @@ def get_stock_info_data(current_user_uid):
         ticker = yf.Ticker(ticker_symbol)
         info = {}
         try:
-            fetched_info = ticker.info
+            fetched_info = _get_yahoo_info(ticker_symbol)
             if isinstance(fetched_info, dict):
                 info = fetched_info
         except Exception as e:
