@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 import yfinance as yf
 from flask_cors import CORS
 import pandas as pd
@@ -13,6 +13,7 @@ from threading import Lock
 import time
 import json
 import base64
+import hashlib
 import re
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -672,6 +673,18 @@ def _serialize_portfolio_detail(doc):
         'revision': int(payload.get('revision') or 0),
         'updatedAt': _iso_timestamp(payload.get('updatedAt')),
     }
+
+
+def _conditional_json(payload):
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    etag = f'"{hashlib.sha256(encoded).hexdigest()}"'
+    if request.headers.get("If-None-Match") == etag:
+        response = make_response("", 304)
+    else:
+        response = make_response(jsonify(payload), 200)
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
+    return response
 
 
 def _ensure_portfolio_docs(uid):
@@ -1488,10 +1501,10 @@ def list_portfolios(current_user_uid):
         active_id = _active_portfolio_id(current_user_uid, docs)
         portfolios = [_serialize_portfolio_summary(doc) for doc in _list_portfolio_summary_docs(current_user_uid)]
         portfolios.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
-        return jsonify({
+        return _conditional_json({
             "portfolios": portfolios,
             "activePortfolioId": active_id,
-        }), 200
+        })
     except Exception as exc:
         return _firestore_error_response("load portfolios", exc)
 
@@ -1510,11 +1523,11 @@ def bootstrap_portfolio(current_user_uid):
             return jsonify({"message": "Active portfolio not found."}), 404
         portfolios = [_serialize_portfolio_summary(doc) for doc in _list_portfolio_summary_docs(current_user_uid)]
         portfolios.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
-        return jsonify({
+        return _conditional_json({
             "portfolios": portfolios,
             "activePortfolioId": active_id,
             "activePortfolio": _serialize_portfolio_detail(active_doc),
-        }), 200
+        })
     except Exception as exc:
         return _firestore_error_response("bootstrap portfolio", exc)
 
@@ -1730,7 +1743,7 @@ def load_portfolio(current_user_uid):
         if doc is None:
             return jsonify({'message': 'Portfolio not found.'}), 404
 
-        return jsonify(_serialize_portfolio_detail(doc)), 200
+        return _conditional_json(_serialize_portfolio_detail(doc))
     except Exception as exc:
         return _firestore_error_response("load portfolio", exc)
 
