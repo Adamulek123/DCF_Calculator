@@ -111,13 +111,17 @@ _fx_cache = {}
 _price_cache = {}
 _history_cache = {}
 _yahoo_info_cache = {}
+_financial_document_cache = {}
 _price_cache_lock = Lock()
 _history_cache_lock = Lock()
 _yahoo_info_cache_lock = Lock()
+_financial_document_cache_lock = Lock()
 FX_CACHE_TTL_SECONDS = 6 * 60 * 60
 PRICE_CACHE_TTL_SECONDS = 60
 PRICE_FAILURE_CACHE_TTL_SECONDS = 15
 YAHOO_INFO_CACHE_TTL_SECONDS = 5 * 60
+FINANCIAL_DOCUMENT_CACHE_TTL_SECONDS = 24 * 60 * 60
+FINANCIAL_DOCUMENT_CACHE_MAX_ENTRIES = 200
 
 
 def _get_yahoo_info(symbol):
@@ -1242,11 +1246,22 @@ def get_stock_info_data(current_user_uid):
 def get_financials_from_firestore(ticker_sym,extracted_data_type):
     if not db:
         return None
+    key = (str(extracted_data_type), str(ticker_sym).upper())
+    now = time.time()
+    with _financial_document_cache_lock:
+        cached = _financial_document_cache.get(key)
+        if cached and now - cached["timestamp"] < FINANCIAL_DOCUMENT_CACHE_TTL_SECONDS:
+            return cached["data"]
     try:
         doc_ref = db.collection(extracted_data_type).document(ticker_sym.upper())
         doc = doc_ref.get()
         if doc.exists:
             data = doc.to_dict()
+            with _financial_document_cache_lock:
+                if len(_financial_document_cache) >= FINANCIAL_DOCUMENT_CACHE_MAX_ENTRIES:
+                    oldest = min(_financial_document_cache, key=lambda item: _financial_document_cache[item]["timestamp"])
+                    _financial_document_cache.pop(oldest, None)
+                _financial_document_cache[key] = {"data": data, "timestamp": now}
             print(f"Retrieved {len(data)} filings for {ticker_sym}")
             return data
         else:
