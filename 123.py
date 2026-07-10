@@ -107,6 +107,7 @@ else:
 
 
 _ticker_cache = []
+_ticker_by_symbol = {}
 _fx_cache = {}
 _price_cache = {}
 _history_cache = {}
@@ -157,12 +158,16 @@ PORTFOLIO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 PORTFOLIO_SETTINGS_DOC = "_settings"
 
 def load_tickers_to_cache():
-    global _ticker_cache
+    global _ticker_cache, _ticker_by_symbol
     
     try:
         print("Loading tickers from JSON file into memory cache...")
         with open("all_exchanges_clean.json", "r") as f:
             _ticker_cache = json.load(f)
+        _ticker_by_symbol = {
+            str(item.get("symbol", "")).upper(): item
+            for item in _ticker_cache if item.get("symbol")
+        }
         print(f"Loaded {len(_ticker_cache)} tickers into memory cache")
     except FileNotFoundError:
         print("Error: all_exchanges_clean.json not found")
@@ -178,7 +183,7 @@ def is_valid_ticker(ticker_symbol):
     if not ticker_symbol or not _ticker_cache:
         return False
     ticker_upper = ticker_symbol.upper()
-    return any(t.get('symbol', '').upper() == ticker_upper for t in _ticker_cache)
+    return ticker_upper in _ticker_by_symbol
 
 
 def _safe_float(value):
@@ -789,8 +794,8 @@ def _ticker_metadata_for_positions(positions):
             "sector": item.get("sector"),
             "industry": item.get("industry"),
         }
-        for item in _ticker_cache
-        if str(item.get("symbol", "")).strip().upper() in wanted
+        for symbol, item in _ticker_by_symbol.items()
+        if symbol in wanted
     }
 
 
@@ -1907,7 +1912,7 @@ def get_tickers(current_user_uid):
     if not _ticker_cache:
         return jsonify({'message': 'Ticker cache is empty'}), 500
     
-    return jsonify(_ticker_cache), 200
+    return _conditional_json(_ticker_cache)
 
 @app.route('/')
 def health_check():
