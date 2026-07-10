@@ -1607,6 +1607,7 @@ def save_portfolio(current_user_uid):
     portfolio_id = str(data.get("portfolioId", "")).strip()
     positions = data.get("positions", [])
     base_currency = str(data.get("baseCurrency", "USD")).strip().upper()
+    base_revision = data.get("baseRevision")
 
     if not _valid_portfolio_id(portfolio_id):
         return jsonify({'message': 'A valid portfolioId is required.'}), 400
@@ -1615,22 +1616,44 @@ def save_portfolio(current_user_uid):
         return jsonify({'message': validation_error}), 400
     if len(base_currency) != 3:
         return jsonify({'message': 'Invalid baseCurrency.'}), 400
+    if base_revision is not None and (not isinstance(base_revision, int) or base_revision < 0):
+        return jsonify({'message': 'baseRevision must be a non-negative integer.'}), 400
 
     try:
         doc_ref = _portfolios_ref(current_user_uid).document(portfolio_id)
-        snapshot = doc_ref.get()
-        if not snapshot.exists:
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def update_portfolio(transaction):
+            snapshot = doc_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                return None
+            current_revision = int((snapshot.to_dict() or {}).get('revision') or 0)
+            if base_revision is not None and base_revision != current_revision:
+                raise ValueError('REVISION_CONFLICT')
+            next_revision = current_revision + 1
+            transaction.update(doc_ref, {
+                'positions': cleaned_positions,
+                'baseCurrency': base_currency,
+                'revision': next_revision,
+                'updatedAt': firestore.SERVER_TIMESTAMP,
+            })
+            return next_revision
+
+        next_revision = update_portfolio(transaction)
+        if next_revision is None:
             return jsonify({'message': 'Portfolio not found.'}), 404
-        doc_ref.update({
-            'positions': cleaned_positions,
-            'baseCurrency': base_currency,
-            'updatedAt': firestore.SERVER_TIMESTAMP
-        })
         return jsonify({
             'message': 'Portfolio saved successfully.',
             'portfolioId': portfolio_id,
-            'count': len(cleaned_positions)
+            'count': len(cleaned_positions),
+            'revision': next_revision,
+            'updatedAt': _utc_now(),
         }), 200
+    except ValueError as exc:
+        if str(exc) == 'REVISION_CONFLICT':
+            return jsonify({'message': 'Portfolio changed on another device. Reload before saving.', 'code': 'REVISION_CONFLICT'}), 409
+        return jsonify({'message': 'Unable to save portfolio.'}), 400
     except Exception as exc:
         return _firestore_error_response("save portfolio", exc)
 
@@ -1664,6 +1687,8 @@ def load_portfolio(current_user_uid):
             'positions': positions,
             'baseCurrency': base_currency,
             'tickerMetadata': _ticker_metadata_for_positions(positions),
+            'revision': int(payload.get('revision') or 0),
+            'updatedAt': _iso_timestamp(payload.get('updatedAt')),
         }), 200
     except Exception as exc:
         return _firestore_error_response("load portfolio", exc)
