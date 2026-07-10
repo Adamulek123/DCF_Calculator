@@ -145,6 +145,7 @@ MAX_WATCHLISTS = 20
 MAX_WATCHLIST_TICKERS = 50
 MAX_WATCHLIST_NAME_LENGTH = 60
 MAX_PRICE_WORKERS = 8
+QUOTE_EXECUTOR = ThreadPoolExecutor(max_workers=MAX_PRICE_WORKERS)
 PORTFOLIO_PRICE_FETCH_TIMEOUT_SECONDS = 10
 PORTFOLIO_LOAD_TIMEOUT_SECONDS = 15
 HISTORY_CACHE_TTL_SECONDS = 5 * 60
@@ -254,10 +255,8 @@ def list_current_price(ticker_symbols):
                 results[symbol] = cached
 
     if missing:
-        worker_count = min(MAX_PRICE_WORKERS, len(missing))
-        executor = ThreadPoolExecutor(max_workers=worker_count)
         futures = {
-            executor.submit(_fetch_current_price, symbol): symbol
+            QUOTE_EXECUTOR.submit(_fetch_current_price, symbol): symbol
             for symbol in missing
         }
         completed, timed_out = wait(
@@ -290,7 +289,6 @@ def list_current_price(ticker_symbols):
                 _price_inflight.pop(symbol, Event()).set()
             print(f"Portfolio price fetch timed out for {symbol}")
 
-        executor.shutdown(wait=False, cancel_futures=True)
 
     prices = []
     quote_timestamps = []
