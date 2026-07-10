@@ -9,7 +9,7 @@ import datetime
 import requests
 from functools import wraps
 from concurrent.futures import ThreadPoolExecutor, wait
-from threading import Lock
+from threading import Lock, Event
 import time
 import json
 import base64
@@ -112,6 +112,7 @@ _price_cache = {}
 _history_cache = {}
 _yahoo_info_cache = {}
 _financial_document_cache = {}
+_price_inflight = {}
 _price_cache_lock = Lock()
 _history_cache_lock = Lock()
 _yahoo_info_cache_lock = Lock()
@@ -148,6 +149,8 @@ PORTFOLIO_PRICE_FETCH_TIMEOUT_SECONDS = 10
 PORTFOLIO_LOAD_TIMEOUT_SECONDS = 15
 HISTORY_CACHE_TTL_SECONDS = 5 * 60
 HISTORY_FAILURE_CACHE_TTL_SECONDS = 60
+PRICE_CACHE_MAX_ENTRIES = 500
+HISTORY_CACHE_MAX_ENTRIES = 200
 WATCHLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 PORTFOLIO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 PORTFOLIO_SETTINGS_DOC = "_settings"
@@ -186,6 +189,12 @@ def _safe_float(value):
         return None
 
 
+def _prune_cache(cache, limit):
+    while len(cache) > limit:
+        oldest = min(cache, key=lambda key: cache[key].get("timestamp", 0))
+        cache.pop(oldest, None)
+
+
 def _normalize_tickers(ticker_symbols, deduplicate=False):
     normalized = []
     seen = set()
@@ -218,6 +227,7 @@ def list_current_price(ticker_symbols):
     results = {}
     missing = []
 
+    waiting = []
     with _price_cache_lock:
         for symbol in set(normalized):
             if not symbol:
@@ -230,8 +240,18 @@ def list_current_price(ticker_symbols):
             )
             if cached and now - cached.get("timestamp", 0) < ttl:
                 results[symbol] = cached
+            elif symbol in _price_inflight:
+                waiting.append((symbol, _price_inflight[symbol]))
             else:
                 missing.append(symbol)
+                _price_inflight[symbol] = Event()
+
+    for symbol, event in waiting:
+        event.wait(PORTFOLIO_PRICE_FETCH_TIMEOUT_SECONDS)
+        with _price_cache_lock:
+            cached = _price_cache.get(symbol)
+            if cached:
+                results[symbol] = cached
 
     if missing:
         worker_count = min(MAX_PRICE_WORKERS, len(missing))
@@ -256,6 +276,8 @@ def list_current_price(ticker_symbols):
             results[symbol] = quote
             with _price_cache_lock:
                 _price_cache[symbol] = quote
+                _prune_cache(_price_cache, PRICE_CACHE_MAX_ENTRIES)
+                _price_inflight.pop(symbol, Event()).set()
 
         for future in timed_out:
             symbol = futures[future]
@@ -264,6 +286,8 @@ def list_current_price(ticker_symbols):
             results[symbol] = quote
             with _price_cache_lock:
                 _price_cache[symbol] = quote
+                _prune_cache(_price_cache, PRICE_CACHE_MAX_ENTRIES)
+                _price_inflight.pop(symbol, Event()).set()
             print(f"Portfolio price fetch timed out for {symbol}")
 
         executor.shutdown(wait=False, cancel_futures=True)
@@ -461,6 +485,7 @@ def _load_adjusted_close_history(tickers, force=False):
                     "series": series.copy(),
                     "timestamp": fetched_at,
                 }
+                _prune_cache(_history_cache, HISTORY_CACHE_MAX_ENTRIES)
 
     return histories
 
