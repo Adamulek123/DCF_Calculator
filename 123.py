@@ -266,6 +266,7 @@ def list_current_price(ticker_symbols):
     normalized = _normalize_tickers(ticker_symbols)
     now = time.time()
     results = {}
+    cache_statuses = {}
     missing = []
 
     waiting = []
@@ -281,6 +282,7 @@ def list_current_price(ticker_symbols):
             )
             if cached and now - cached.get("timestamp", 0) < ttl:
                 results[symbol] = cached
+                cache_statuses[symbol] = "hit"
             elif symbol in _price_inflight:
                 waiting.append((symbol, _price_inflight[symbol]))
             else:
@@ -293,6 +295,7 @@ def list_current_price(ticker_symbols):
             cached = _price_cache.get(symbol)
             if cached:
                 results[symbol] = cached
+                cache_statuses[symbol] = "shared"
 
     if missing:
         futures = {
@@ -313,6 +316,7 @@ def list_current_price(ticker_symbols):
                 price = None
             quote = {"price": price, "timestamp": time.time()}
             results[symbol] = quote
+            cache_statuses[symbol] = "miss"
             with _price_cache_lock:
                 _price_cache[symbol] = quote
                 _prune_cache(_price_cache, PRICE_CACHE_MAX_ENTRIES)
@@ -323,6 +327,7 @@ def list_current_price(ticker_symbols):
             future.cancel()
             quote = {"price": None, "timestamp": time.time()}
             results[symbol] = quote
+            cache_statuses[symbol] = "error"
             with _price_cache_lock:
                 _price_cache[symbol] = quote
                 _prune_cache(_price_cache, PRICE_CACHE_MAX_ENTRIES)
@@ -332,6 +337,7 @@ def list_current_price(ticker_symbols):
 
     prices = []
     quote_timestamps = []
+    quote_cache_statuses = []
     for symbol in normalized:
         quote = results.get(symbol, {})
         prices.append(quote.get("price"))
@@ -343,8 +349,9 @@ def list_current_price(ticker_symbols):
             if timestamp
             else None
         )
+        quote_cache_statuses.append(cache_statuses.get(symbol, "miss"))
 
-    return prices, quote_timestamps
+    return prices, quote_timestamps, quote_cache_statuses
 
 
 
@@ -360,6 +367,17 @@ def _iso_timestamp(value):
     if isinstance(value, str):
         return value
     return None
+
+
+def _with_freshness(payload, source_updated_at=None, cache_status="live", age=0):
+    """Add a consistent freshness envelope without changing entity fields."""
+    return {
+        **payload,
+        "requestedAt": _utc_now().isoformat(),
+        "sourceUpdatedAt": _iso_timestamp(source_updated_at),
+        "cacheStatus": cache_status,
+        "age": max(0, int(age or 0)),
+    }
 
 
 def _normalize_watchlist_name(value):
@@ -765,7 +783,13 @@ def _serialize_portfolio_detail(doc):
 
 
 def _conditional_json(payload):
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    # Request-time freshness fields must not make an otherwise unchanged entity
+    # miss conditional validation on every request.
+    etag_payload = {
+        key: value for key, value in payload.items()
+        if key not in {"requestedAt", "cacheStatus", "age"}
+    } if isinstance(payload, dict) else payload
+    encoded = json.dumps(etag_payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     etag = f'"{hashlib.sha256(encoded).hexdigest()}"'
     if request.headers.get("If-None-Match") == etag:
         response = make_response("", 304)
@@ -1630,10 +1654,11 @@ def list_portfolios(current_user_uid):
         active_id = _active_portfolio_id(current_user_uid, docs)
         portfolios = [_serialize_portfolio_summary(doc) for doc in _list_portfolio_summary_docs(current_user_uid)]
         portfolios.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
-        return _conditional_json({
+        source_updates = [item.get("updatedAt") for item in portfolios if item.get("updatedAt")]
+        return _conditional_json(_with_freshness({
             "portfolios": portfolios,
             "activePortfolioId": active_id,
-        })
+        }, max(source_updates, default=None)))
     except Exception as exc:
         return _firestore_error_response("load portfolios", exc)
 
@@ -1652,11 +1677,12 @@ def bootstrap_portfolio(current_user_uid):
             return jsonify({"message": "Active portfolio not found."}), 404
         portfolios = [_serialize_portfolio_summary(doc) for doc in _list_portfolio_summary_docs(current_user_uid)]
         portfolios.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
-        return _conditional_json({
+        active_detail = _serialize_portfolio_detail(active_doc)
+        return _conditional_json(_with_freshness({
             "portfolios": portfolios,
             "activePortfolioId": active_id,
-            "activePortfolio": _serialize_portfolio_detail(active_doc),
-        })
+            "activePortfolio": active_detail,
+        }, active_detail.get("updatedAt")))
     except Exception as exc:
         return _firestore_error_response("bootstrap portfolio", exc)
 
@@ -1872,7 +1898,7 @@ def save_portfolio(current_user_uid):
         next_revision, idempotent_replay = transaction_result
         canonical_doc = doc_ref.get()
         canonical = _serialize_portfolio_detail(canonical_doc)
-        return jsonify({
+        return jsonify(_with_freshness({
             'message': 'Portfolio saved successfully.',
             'portfolioId': portfolio_id,
             'count': len(cleaned_positions),
@@ -1880,15 +1906,16 @@ def save_portfolio(current_user_uid):
             'updatedAt': canonical.get('updatedAt') or _utc_now(),
             'portfolio': canonical,
             'idempotentReplay': idempotent_replay,
-        }), 200
+        }, canonical.get("updatedAt"))), 200
     except ValueError as exc:
         if str(exc) == 'REVISION_CONFLICT':
             current_doc = doc_ref.get()
-            return jsonify({
+            portfolio = _serialize_portfolio_detail(current_doc) if current_doc.exists else None
+            return jsonify(_with_freshness({
                 'message': 'Portfolio changed on another device. Reload before saving.',
                 'code': 'REVISION_CONFLICT',
-                'portfolio': _serialize_portfolio_detail(current_doc) if current_doc.exists else None,
-            }), 409
+                'portfolio': portfolio,
+            }, portfolio.get("updatedAt") if portfolio else None)), 409
         return jsonify({'message': 'Unable to save portfolio.'}), 400
     except Exception as exc:
         return _firestore_error_response("save portfolio", exc)
@@ -1911,7 +1938,8 @@ def load_portfolio(current_user_uid):
         if doc is None:
             return jsonify({'message': 'Portfolio not found.'}), 404
 
-        return _conditional_json(_serialize_portfolio_detail(doc))
+        detail = _serialize_portfolio_detail(doc)
+        return _conditional_json(_with_freshness(detail, detail.get("updatedAt")))
     except Exception as exc:
         return _firestore_error_response("load portfolio", exc)
 
@@ -1937,14 +1965,20 @@ def get_portfolio_current_prices(current_user_uid):
     if invalid:
         return jsonify({'message': f'Invalid ticker symbol: {invalid[0]}.'}), 400
 
-    prices, quote_timestamps = list_current_price(normalized_tickers)
+    prices, quote_timestamps, quote_cache_statuses = list_current_price(normalized_tickers)
+    timestamps = [timestamp for timestamp in quote_timestamps if timestamp]
+    oldest_timestamp = min(timestamps) if timestamps else None
+    oldest_age = max(
+        0,
+        int((_utc_now() - datetime.datetime.fromisoformat(oldest_timestamp)).total_seconds()),
+    ) if oldest_timestamp else 0
 
-    return jsonify({
+    return jsonify(_with_freshness({
         'tickers': normalized_tickers,
         'prices': prices,
         'quoteTimestamps': quote_timestamps,
-        'requestedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
-    }), 200
+        'quoteCacheStatuses': quote_cache_statuses,
+    }, oldest_timestamp, "mixed" if len(set(quote_cache_statuses)) > 1 else (quote_cache_statuses[0] if quote_cache_statuses else "miss"), oldest_age)), 200
 
 
 @app.route('/portfolio/conversion-rates', methods=['GET'])
