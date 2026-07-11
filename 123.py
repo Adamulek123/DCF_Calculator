@@ -146,6 +146,7 @@ FX_CACHE_TTL_SECONDS = 6 * 60 * 60
 PRICE_CACHE_TTL_SECONDS = 60
 PRICE_FAILURE_CACHE_TTL_SECONDS = 15
 YAHOO_INFO_CACHE_TTL_SECONDS = 5 * 60
+YAHOO_INFO_FAILURE_CACHE_TTL_SECONDS = 15
 FINANCIAL_DOCUMENT_CACHE_TTL_SECONDS = 24 * 60 * 60
 FINANCIAL_DOCUMENT_CACHE_MAX_ENTRIES = 200
 
@@ -155,12 +156,21 @@ def _get_yahoo_info(symbol):
     now = time.time()
     with _yahoo_info_cache_lock:
         cached = _yahoo_info_cache.get(key)
-        if cached and now - cached["timestamp"] < YAHOO_INFO_CACHE_TTL_SECONDS:
-            return dict(cached["data"])
-    info = yf.Ticker(key).info
-    info = info if isinstance(info, dict) else {}
+        if cached:
+            ttl = YAHOO_INFO_FAILURE_CACHE_TTL_SECONDS if cached.get("error") else YAHOO_INFO_CACHE_TTL_SECONDS
+            if now - cached["timestamp"] < ttl:
+                if cached.get("error"):
+                    raise RuntimeError("Yahoo provider recently failed; retry shortly.")
+                return dict(cached["data"])
+    try:
+        info = yf.Ticker(key).info
+        info = info if isinstance(info, dict) else {}
+    except Exception:
+        with _yahoo_info_cache_lock:
+            _yahoo_info_cache[key] = {"error": True, "timestamp": now}
+        raise
     with _yahoo_info_cache_lock:
-        _yahoo_info_cache[key] = {"data": dict(info), "timestamp": now}
+        _yahoo_info_cache[key] = {"data": dict(info), "error": False, "timestamp": now}
     return info
 MAX_PORTFOLIO_TICKERS = 50
 MAX_PORTFOLIO_POSITIONS = 200
