@@ -179,6 +179,7 @@ PRICE_CACHE_MAX_ENTRIES = 500
 HISTORY_CACHE_MAX_ENTRIES = 200
 WATCHLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 PORTFOLIO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 PORTFOLIO_SETTINGS_DOC = "_settings"
 
 def load_tickers_to_cache():
@@ -691,6 +692,11 @@ def _normalize_portfolio_name(value):
 def _valid_portfolio_id(portfolio_id):
     value = str(portfolio_id or "")
     return value != PORTFOLIO_SETTINGS_DOC and bool(PORTFOLIO_ID_PATTERN.fullmatch(value))
+
+
+def _idempotency_key(value):
+    key = str(value or "").strip()
+    return key if IDEMPOTENCY_KEY_PATTERN.fullmatch(key) else None
 
 
 def _portfolios_ref(uid):
@@ -1657,8 +1663,27 @@ def create_portfolio(current_user_uid):
     name, name_error = _normalize_portfolio_name(data.get("name"))
     if name_error:
         return jsonify({"message": name_error}), 400
+    portfolio_id = str(data.get("portfolioId") or "").strip()
+    idempotency_key = _idempotency_key(data.get("idempotencyKey"))
+    if portfolio_id and not _valid_portfolio_id(portfolio_id):
+        return jsonify({"message": "Invalid client portfolio ID."}), 400
+    if data.get("idempotencyKey") is not None and not idempotency_key:
+        return jsonify({"message": "Invalid idempotency key."}), 400
     try:
         docs = _list_portfolio_docs(current_user_uid)
+        doc_ref = _portfolios_ref(current_user_uid).document(portfolio_id) if portfolio_id else None
+        if doc_ref:
+            existing_doc = doc_ref.get()
+            if existing_doc.exists:
+                existing = existing_doc.to_dict() or {}
+                if idempotency_key and existing.get("createOperationId") == idempotency_key:
+                    return jsonify({
+                        "portfolio": _serialize_portfolio_summary(existing_doc),
+                        "canonicalPortfolio": _serialize_portfolio_detail(existing_doc),
+                        "activePortfolioId": _active_portfolio_id(current_user_uid, docs),
+                        "idempotentReplay": True,
+                    }), 200
+                return jsonify({"message": "A portfolio with that ID already exists."}), 409
         if len(docs) >= MAX_PORTFOLIOS:
             return jsonify({
                 "message": f"A maximum of {MAX_PORTFOLIOS} portfolios is allowed."
@@ -1671,10 +1696,12 @@ def create_portfolio(current_user_uid):
             "positions": [],
             "positionCount": 0,
             "baseCurrency": "USD",
+            "revision": 0,
+            "createOperationId": idempotency_key,
             "createdAt": firestore.SERVER_TIMESTAMP,
             "updatedAt": firestore.SERVER_TIMESTAMP,
         }
-        doc_ref = _portfolios_ref(current_user_uid).document()
+        doc_ref = doc_ref or _portfolios_ref(current_user_uid).document()
         doc_ref.set(payload)
         _portfolios_ref(current_user_uid).document(PORTFOLIO_SETTINGS_DOC).set({
             "activePortfolioId": doc_ref.id
@@ -1686,6 +1713,7 @@ def create_portfolio(current_user_uid):
         }
         return jsonify({
             "portfolio": _serialize_portfolio_summary(doc_ref.id, response_payload),
+            "canonicalPortfolio": _serialize_portfolio_detail(doc_ref.id, response_payload),
             "activePortfolioId": doc_ref.id,
         }), 201
     except Exception as exc:
@@ -1788,6 +1816,7 @@ def save_portfolio(current_user_uid):
     positions = data.get("positions", [])
     base_currency = str(data.get("baseCurrency", "USD")).strip().upper()
     base_revision = data.get("baseRevision")
+    idempotency_key = _idempotency_key(data.get("idempotencyKey"))
 
     if not _valid_portfolio_id(portfolio_id):
         return jsonify({'message': 'A valid portfolioId is required.'}), 400
@@ -1798,6 +1827,8 @@ def save_portfolio(current_user_uid):
         return jsonify({'message': 'Invalid baseCurrency.'}), 400
     if base_revision is not None and (not isinstance(base_revision, int) or base_revision < 0):
         return jsonify({'message': 'baseRevision must be a non-negative integer.'}), 400
+    if data.get("idempotencyKey") is not None and not idempotency_key:
+        return jsonify({'message': 'Invalid idempotency key.'}), 400
 
     try:
         doc_ref = _portfolios_ref(current_user_uid).document(portfolio_id)
@@ -1808,7 +1839,10 @@ def save_portfolio(current_user_uid):
             snapshot = doc_ref.get(transaction=transaction)
             if not snapshot.exists:
                 return None
-            current_revision = int((snapshot.to_dict() or {}).get('revision') or 0)
+            current = snapshot.to_dict() or {}
+            current_revision = int(current.get('revision') or 0)
+            if idempotency_key and current.get("lastMutationId") == idempotency_key:
+                return current_revision, True
             if base_revision is not None and base_revision != current_revision:
                 raise ValueError('REVISION_CONFLICT')
             next_revision = current_revision + 1
@@ -1817,23 +1851,34 @@ def save_portfolio(current_user_uid):
                 'positionCount': len(cleaned_positions),
                 'baseCurrency': base_currency,
                 'revision': next_revision,
+                'lastMutationId': idempotency_key,
                 'updatedAt': firestore.SERVER_TIMESTAMP,
             })
-            return next_revision
+            return next_revision, False
 
-        next_revision = update_portfolio(transaction)
-        if next_revision is None:
+        transaction_result = update_portfolio(transaction)
+        if transaction_result is None:
             return jsonify({'message': 'Portfolio not found.'}), 404
+        next_revision, idempotent_replay = transaction_result
+        canonical_doc = doc_ref.get()
+        canonical = _serialize_portfolio_detail(canonical_doc)
         return jsonify({
             'message': 'Portfolio saved successfully.',
             'portfolioId': portfolio_id,
             'count': len(cleaned_positions),
             'revision': next_revision,
-            'updatedAt': _utc_now(),
+            'updatedAt': canonical.get('updatedAt') or _utc_now(),
+            'portfolio': canonical,
+            'idempotentReplay': idempotent_replay,
         }), 200
     except ValueError as exc:
         if str(exc) == 'REVISION_CONFLICT':
-            return jsonify({'message': 'Portfolio changed on another device. Reload before saving.', 'code': 'REVISION_CONFLICT'}), 409
+            current_doc = doc_ref.get()
+            return jsonify({
+                'message': 'Portfolio changed on another device. Reload before saving.',
+                'code': 'REVISION_CONFLICT',
+                'portfolio': _serialize_portfolio_detail(current_doc) if current_doc.exists else None,
+            }), 409
         return jsonify({'message': 'Unable to save portfolio.'}), 400
     except Exception as exc:
         return _firestore_error_response("save portfolio", exc)
