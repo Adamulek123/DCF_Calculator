@@ -253,3 +253,6 @@ Render supplies `PORT`; do not hard-code a production port. The rate limiter cur
 - Keep route names, methods, query parameters, request bodies, and response fields synchronized with `../frontend/js/`.
 - There is currently no automated backend test suite. Test the health route, authentication failure cases, the changed endpoint, and its frontend caller before committing.
 - Avoid using production Firestore documents for incidental tests; use controlled data or Firebase emulators where available.
+# Optional shared cache
+
+Set `REDIS_URL` to a managed Redis-compatible endpoint to share Flask rate-limit counters and versioned cache entries across Render workers. The service remains fully functional without it, using bounded process-memory caches. Redis keys use the `dcf-cache:v1` prefix and existing route TTLs; do not point this setting at an unbounded or unauthenticated Redis instance.

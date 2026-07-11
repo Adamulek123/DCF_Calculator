@@ -16,6 +16,7 @@ import json
 import base64
 import hashlib
 import re
+import redis
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import edgar
@@ -24,6 +25,14 @@ from edgar import *
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 256 * 1024
 PROCESS_STARTED_AT = time.time()
+SHARED_CACHE_URL = os.environ.get("REDIS_URL", "").strip()
+SHARED_CACHE_PREFIX = "dcf-cache:v1"
+_shared_cache = redis.Redis.from_url(
+    SHARED_CACHE_URL,
+    socket_connect_timeout=0.25,
+    socket_timeout=0.25,
+    decode_responses=True,
+) if SHARED_CACHE_URL else None
 # Negotiate Brotli or gzip for JSON responses. Brotli support is supplied by
 # the explicit Brotli dependency in requirements.txt; gzip remains available
 # for clients and proxies that do not advertise `br`.
@@ -97,7 +106,7 @@ limiter = Limiter(
     get_remote_address,
     app=app,
     default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://",
+    storage_uri=SHARED_CACHE_URL or "memory://",
 )
 
 def _environment_flag(name, default=False):
@@ -175,6 +184,34 @@ FINANCIAL_DOCUMENT_CACHE_TTL_SECONDS = 24 * 60 * 60
 FINANCIAL_DOCUMENT_CACHE_MAX_ENTRIES = 200
 
 
+def _shared_cache_key(resource, key):
+    return f"{SHARED_CACHE_PREFIX}:{resource}:{key}"
+
+
+def _shared_cache_get(resource, key):
+    if not _shared_cache:
+        return None
+    try:
+        value = _shared_cache.get(_shared_cache_key(resource, key))
+        return json.loads(value) if value else None
+    except Exception as exc:
+        print(f"Shared cache read failed for {resource}: {type(exc).__name__}")
+        return None
+
+
+def _shared_cache_set(resource, key, value, ttl_seconds):
+    if not _shared_cache:
+        return
+    try:
+        _shared_cache.setex(
+            _shared_cache_key(resource, key),
+            max(1, int(ttl_seconds)),
+            json.dumps(value, default=str, separators=(",", ":")),
+        )
+    except Exception as exc:
+        print(f"Shared cache write failed for {resource}: {type(exc).__name__}")
+
+
 def _log_cache_event(resource, outcome):
     print(json.dumps({"event": "cache", "resource": resource, "outcome": outcome}, separators=(",", ":")))
 
@@ -192,6 +229,16 @@ def _get_yahoo_info(symbol):
                     raise RuntimeError("Yahoo provider recently failed; retry shortly.")
                 _log_cache_event("yahoo_info", "hit")
                 return dict(cached["data"])
+    shared = _shared_cache_get("yahoo-info", key)
+    if shared:
+        if shared.get("error"):
+            _log_cache_event("yahoo_info", "shared_negative_hit")
+            raise RuntimeError("Yahoo provider recently failed; retry shortly.")
+        data = shared.get("data") if isinstance(shared.get("data"), dict) else {}
+        with _yahoo_info_cache_lock:
+            _yahoo_info_cache[key] = {"data": data, "error": False, "timestamp": now}
+        _log_cache_event("yahoo_info", "shared_hit")
+        return dict(data)
     _log_cache_event("yahoo_info", "miss")
     try:
         info = yf.Ticker(key).info
@@ -200,9 +247,11 @@ def _get_yahoo_info(symbol):
         _log_cache_event("yahoo_info", "negative_set")
         with _yahoo_info_cache_lock:
             _yahoo_info_cache[key] = {"error": True, "timestamp": now}
+        _shared_cache_set("yahoo-info", key, {"error": True}, YAHOO_INFO_FAILURE_CACHE_TTL_SECONDS)
         raise
     with _yahoo_info_cache_lock:
         _yahoo_info_cache[key] = {"data": dict(info), "error": False, "timestamp": now}
+    _shared_cache_set("yahoo-info", key, {"data": info, "error": False}, YAHOO_INFO_CACHE_TTL_SECONDS)
     return info
 MAX_PORTFOLIO_TICKERS = 50
 MAX_PORTFOLIO_POSITIONS = 200

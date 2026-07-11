@@ -7,4 +7,5 @@ firebase-admin
 requests
 gunicorn
 flask_limiter
+redis
 edgartools
