@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify, make_response, g
 from flask_compress import Compress
 import yfinance as yf
 from flask_cors import CORS
@@ -23,6 +23,7 @@ from edgar import *
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 256 * 1024
+PROCESS_STARTED_AT = time.time()
 # Negotiate Brotli or gzip for JSON responses. Brotli support is supplied by
 # the explicit Brotli dependency in requirements.txt; gzip remains available
 # for clients and proxies that do not advertise `br`.
@@ -49,6 +50,29 @@ CORS(
     allow_headers=["Authorization", "Content-Type"],
     supports_credentials=False,
 )
+
+
+@app.before_request
+def start_request_metrics():
+    g.request_started_at = time.perf_counter()
+
+
+@app.after_request
+def log_request_metrics(response):
+    started_at = getattr(g, "request_started_at", None)
+    if started_at is not None:
+        payload = {
+            "event": "http_request",
+            "route": request.path,
+            "method": request.method,
+            "status": response.status_code,
+            "durationMs": round((time.perf_counter() - started_at) * 1000, 1),
+            "bytes": response.calculate_content_length() or 0,
+            "cacheControl": response.headers.get("Cache-Control"),
+            "coldStart": time.time() - PROCESS_STARTED_AT < 60,
+        }
+        print(json.dumps(payload, separators=(",", ":")))
+    return response
 
 
 @app.after_request
@@ -151,6 +175,10 @@ FINANCIAL_DOCUMENT_CACHE_TTL_SECONDS = 24 * 60 * 60
 FINANCIAL_DOCUMENT_CACHE_MAX_ENTRIES = 200
 
 
+def _log_cache_event(resource, outcome):
+    print(json.dumps({"event": "cache", "resource": resource, "outcome": outcome}, separators=(",", ":")))
+
+
 def _get_yahoo_info(symbol):
     key = str(symbol or "").upper().strip()
     now = time.time()
@@ -160,12 +188,16 @@ def _get_yahoo_info(symbol):
             ttl = YAHOO_INFO_FAILURE_CACHE_TTL_SECONDS if cached.get("error") else YAHOO_INFO_CACHE_TTL_SECONDS
             if now - cached["timestamp"] < ttl:
                 if cached.get("error"):
+                    _log_cache_event("yahoo_info", "negative_hit")
                     raise RuntimeError("Yahoo provider recently failed; retry shortly.")
+                _log_cache_event("yahoo_info", "hit")
                 return dict(cached["data"])
+    _log_cache_event("yahoo_info", "miss")
     try:
         info = yf.Ticker(key).info
         info = info if isinstance(info, dict) else {}
     except Exception:
+        _log_cache_event("yahoo_info", "negative_set")
         with _yahoo_info_cache_lock:
             _yahoo_info_cache[key] = {"error": True, "timestamp": now}
         raise
@@ -283,10 +315,12 @@ def list_current_price(ticker_symbols):
             if cached and now - cached.get("timestamp", 0) < ttl:
                 results[symbol] = cached
                 cache_statuses[symbol] = "hit"
+                _log_cache_event("portfolio_quote", "hit")
             elif symbol in _price_inflight:
                 waiting.append((symbol, _price_inflight[symbol]))
             else:
                 missing.append(symbol)
+                _log_cache_event("portfolio_quote", "miss")
                 _price_inflight[symbol] = Event()
 
     for symbol, event in waiting:
