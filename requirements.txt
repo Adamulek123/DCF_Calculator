@@ -1,6 +1,8 @@
 Flask
+Flask-Compress
 yfinance
 Flask-Cors
+Brotli
 firebase-admin
 requests
 gunicorn

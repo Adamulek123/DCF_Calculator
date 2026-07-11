@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, make_response
+from flask_compress import Compress
 import yfinance as yf
 from flask_cors import CORS
 import pandas as pd
@@ -22,6 +23,12 @@ from edgar import *
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 256 * 1024
+# Negotiate Brotli or gzip for JSON responses. Brotli support is supplied by
+# the explicit Brotli dependency in requirements.txt; gzip remains available
+# for clients and proxies that do not advertise `br`.
+app.config["COMPRESS_ALGORITHM"] = ["br", "gzip"]
+app.config["COMPRESS_MIN_SIZE"] = 500
+Compress(app)
 
 DEFAULT_CORS_ORIGINS = [
     "https://adamulek123.github.io",
@@ -42,6 +49,23 @@ CORS(
     allow_headers=["Authorization", "Content-Type"],
     supports_credentials=False,
 )
+
+
+@app.after_request
+def apply_response_cache_policy(response):
+    """Prevent shared caches from retaining authenticated or failed responses."""
+    if "Cache-Control" in response.headers:
+        return response
+
+    if request.path == "/" and request.method == "GET" and response.status_code < 400:
+        response.headers["Cache-Control"] = "public, max-age=60"
+    elif request.method != "GET" or response.status_code >= 400:
+        response.headers["Cache-Control"] = "no-store"
+    else:
+        # Every API read currently requires a Firebase bearer token. Keep it
+        # revalidatable by the browser, but never eligible for a shared cache.
+        response.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
+    return response
 
 edgar. set_identity("Financial Extractor Module user@example.com")
 
