@@ -226,6 +226,8 @@ Example save body:
 | POST | /portfolio/current-prices | 30/minute | Returns yfinance prices for a list of tickers |
 | GET | /portfolio/conversion-rates?base=USD | 30/minute | Returns Frankfurter rates, cached in memory for six hours |
 
+Portfolio quotes are fetched from Yahoo in one non-threaded batch and cached per symbol for five minutes. When REDIS_URL is configured, cache entries are shared across service workers; otherwise bounded process memory is used. A last successful quote may be returned with a stale cache status for up to one hour when Yahoo is unavailable or rate-limits the refresh. Failed lookups without a prior quote are cached for 15 seconds.
+
 The existing users/{uid}/portfolio/default document remains the legacy portfolio and is displayed as “Core portfolio” when it has no stored name. Portfolio names are whitespace-normalized and case-insensitively unique per user; users may keep up to 20 portfolios. The reserved _settings document stores activePortfolioId and is never returned as a portfolio.
 
 ### Dip Finder watchlists
