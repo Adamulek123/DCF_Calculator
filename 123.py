@@ -107,6 +107,11 @@ limiter = Limiter(
     app=app,
     default_limits=["200 per day", "50 per hour"],
     storage_uri=SHARED_CACHE_URL or "memory://",
+    storage_options={
+        "socket_connect_timeout": 0.25,
+        "socket_timeout": 0.25,
+    } if SHARED_CACHE_URL else None,
+    in_memory_fallback_enabled=bool(SHARED_CACHE_URL),
 )
 
 def _environment_flag(name, default=False):
