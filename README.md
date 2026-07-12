@@ -160,6 +160,38 @@ Except for `/`, all current routes require a bearer token.
 
 Ticker-backed Firestore routes validate symbols against `all_exchanges_clean.json`. The ticker file is loaded into memory when the process starts, so restart the service after changing it.
 
+### Ticker sector enrichment
+
+`scripts/enrich_ticker_sectors.py` adds Yahoo's broad `sector` and specific
+`industry` fields to `all_exchanges_clean.json`. It preserves existing fields,
+writes atomically, and uses an ignored checkpoint to resume interrupted runs.
+Review a small run first, then complete the file:
+
+```bash
+python scripts/enrich_ticker_sectors.py --limit 25
+python scripts/enrich_ticker_sectors.py
+```
+
+After reviewing the JSON, synchronize it to the top-level Firestore `tickers`
+collection with `python scripts/enrich_ticker_sectors.py --sync-firestore`.
+This requires `FIREBASE_SERVICE_ACCOUNT_KEY_BASE64`; for an emulator, set
+`FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`. Writes are merge upserts in batches of
+400 and never delete documents. Use `--refresh` to fetch existing metadata again.
+Yahoo may rate-limit a full run, so requests default to one worker with 0.8
+seconds of spacing and long retry cooldowns for empty responses. If an older run
+produces a consecutive unresolved block, stop it and rerun this version; resolved
+records are skipped. Use `--request-delay 2` if throttling continues.
+Completed responses with missing or `null` classification fields are accepted
+without retrying because yfinance can print a Yahoo 404 and then return an empty
+object. Only a request exception is treated as unresolved and retried.
+Definitive Yahoo 404, quote-not-found, and delisted-symbol responses are also
+accepted as `null` immediately; only potentially temporary failures are retried.
+The checkpoint records `classified`, `unclassified`, or `unresolved`: confirmed
+null entries are skipped on later runs, while temporary unresolved failures are
+retried. Use `--refresh` to deliberately check completed entries again.
+Raw yfinance output is suppressed so Yahoo's HTML error pages do not flood the
+terminal; the script still prints its own progress and concise retry messages.
+
 ### Saved DCF calculations
 
 | Method | Route | Description |
@@ -184,10 +216,17 @@ Example save body:
 
 | Method | Route | Rate limit | Description |
 | --- | --- | --- | --- |
-| `POST` | `/portfolio/save` | 60/minute | Validates and saves the user's default portfolio |
-| `GET` | `/portfolio/load` | 60/minute | Loads the default portfolio or an empty USD portfolio |
-| `POST` | `/portfolio/current-prices` | 30/minute | Returns yfinance prices for a list of tickers |
-| `GET` | `/portfolio/conversion-rates?base=USD` | 30/minute | Returns Frankfurter rates, cached in memory for six hours |
+| GET | /portfolios | 60/minute | Lists the user's named portfolios and active portfolio ID |
+| POST | /portfolios | 30/minute | Creates and activates an empty named USD portfolio |
+| PATCH | /portfolios/<id> | 60/minute | Renames an owned portfolio |
+| DELETE | /portfolios/<id> | 30/minute | Deletes a portfolio when at least one other portfolio remains |
+| POST | /portfolios/<id>/activate | 60/minute | Persists the active portfolio selection |
+| POST | /portfolio/save | 60/minute | Validates and saves the requested portfolioId |
+| GET | /portfolio/load?portfolioId=<id> | 60/minute | Loads the requested or active portfolio with trusted ticker metadata |
+| POST | /portfolio/current-prices | 30/minute | Returns yfinance prices for a list of tickers |
+| GET | /portfolio/conversion-rates?base=USD | 30/minute | Returns Frankfurter rates, cached in memory for six hours |
+
+The existing users/{uid}/portfolio/default document remains the legacy portfolio and is displayed as “Core portfolio” when it has no stored name. Portfolio names are whitespace-normalized and case-insensitively unique per user; users may keep up to 20 portfolios. The reserved _settings document stores activePortfolioId and is never returned as a portfolio.
 
 ### Dip Finder watchlists
 
@@ -225,7 +264,8 @@ User data is scoped below the UID from the verified Firebase ID token:
 
 ```text
 users/{uid}/calculations/{calculationName}
-users/{uid}/portfolio/default
+users/{uid}/portfolio/{portfolioId}
+users/{uid}/portfolio/_settings
 users/{uid}/watchlists/{watchlistId}
 ```
 

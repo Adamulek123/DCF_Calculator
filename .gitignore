@@ -1,6 +1,7 @@
 # Python cache
 __pycache__/
 *.py[cod]
+.ticker-sector-checkpoint.json
 
 # Local agent instructions
 AGENTS.md
