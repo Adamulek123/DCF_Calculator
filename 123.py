@@ -9,8 +9,7 @@ from firebase_admin import credentials, auth, firestore
 import datetime
 import requests
 from functools import wraps
-from concurrent.futures import ThreadPoolExecutor, wait
-from threading import Lock, Event
+from threading import Lock
 import time
 import json
 import base64
@@ -175,13 +174,14 @@ _price_cache = {}
 _history_cache = {}
 _yahoo_info_cache = {}
 _financial_document_cache = {}
-_price_inflight = {}
 _price_cache_lock = Lock()
+_price_fetch_lock = Lock()
 _history_cache_lock = Lock()
 _yahoo_info_cache_lock = Lock()
 _financial_document_cache_lock = Lock()
 FX_CACHE_TTL_SECONDS = 6 * 60 * 60
-PRICE_CACHE_TTL_SECONDS = 60
+PRICE_CACHE_TTL_SECONDS = 5 * 60
+PRICE_STALE_TTL_SECONDS = 60 * 60
 PRICE_FAILURE_CACHE_TTL_SECONDS = 15
 YAHOO_INFO_CACHE_TTL_SECONDS = 5 * 60
 YAHOO_INFO_FAILURE_CACHE_TTL_SECONDS = 15
@@ -265,8 +265,6 @@ MAX_PORTFOLIO_NAME_LENGTH = 60
 MAX_WATCHLISTS = 20
 MAX_WATCHLIST_TICKERS = 50
 MAX_WATCHLIST_NAME_LENGTH = 60
-MAX_PRICE_WORKERS = 8
-QUOTE_EXECUTOR = ThreadPoolExecutor(max_workers=MAX_PRICE_WORKERS)
 PORTFOLIO_PRICE_FETCH_TIMEOUT_SECONDS = 10
 PORTFOLIO_LOAD_TIMEOUT_SECONDS = 15
 HISTORY_CACHE_TTL_SECONDS = 5 * 60
@@ -334,94 +332,163 @@ def _normalize_tickers(ticker_symbols, deduplicate=False):
     return normalized
 
 
-def _fetch_current_price(symbol):
-    try:
-        ticker = yf.Ticker(symbol)
-        fast_info = ticker.fast_info or {}
-        current_price = _safe_float(fast_info.get("last_price"))
-        if current_price is None:
-            info = ticker.info or {}
-            current_price = _safe_float(info.get("regularMarketPrice"))
-        return current_price
-    except Exception as exc:
-        print(f"Portfolio price fetch failed for {symbol}: {exc}")
+def _extract_batch_price(downloaded, symbol):
+    if downloaded is None or getattr(downloaded, "empty", True):
         return None
+
+    series = None
+    for field in ("Close", "Adj Close"):
+        try:
+            candidate = downloaded[field]
+        except (KeyError, TypeError):
+            continue
+        if isinstance(candidate, pd.DataFrame):
+            if symbol in candidate.columns:
+                series = candidate[symbol]
+            elif len(candidate.columns) == 1:
+                series = candidate.iloc[:, 0]
+        else:
+            series = candidate
+        if series is not None:
+            break
+
+    if series is None:
+        return None
+    values = pd.to_numeric(series, errors="coerce").dropna()
+    return _safe_float(values.iloc[-1]) if not values.empty else None
+
+
+def _fetch_current_prices(symbols):
+    if not symbols:
+        return {}
+    end = (_utc_now() + datetime.timedelta(days=1)).date().isoformat()
+    start = (_utc_now() - datetime.timedelta(days=7)).date().isoformat()
+    downloaded = yf.download(
+        tickers=symbols,
+        start=start,
+        end=end,
+        interval="1d",
+        auto_adjust=True,
+        progress=False,
+        group_by="column",
+        threads=False,
+        timeout=PORTFOLIO_PRICE_FETCH_TIMEOUT_SECONDS,
+    )
+    return {symbol: _extract_batch_price(downloaded, symbol) for symbol in symbols}
+
+
+def _quote_age(quote, now):
+    try:
+        return max(0, now - float(quote.get("timestamp", 0)))
+    except (TypeError, ValueError):
+        return float("inf")
 
 
 def list_current_price(ticker_symbols):
     normalized = _normalize_tickers(ticker_symbols)
+    symbols = list(dict.fromkeys(symbol for symbol in normalized if symbol))
     now = time.time()
     results = {}
     cache_statuses = {}
+    stale_candidates = {}
     missing = []
 
-    waiting = []
-    with _price_cache_lock:
-        for symbol in set(normalized):
-            if not symbol:
-                continue
+    for symbol in symbols:
+        with _price_cache_lock:
             cached = _price_cache.get(symbol)
-            ttl = (
-                PRICE_CACHE_TTL_SECONDS
-                if cached and cached.get("price") is not None
-                else PRICE_FAILURE_CACHE_TTL_SECONDS
-            )
-            if cached and now - cached.get("timestamp", 0) < ttl:
+        if cached and cached.get("price") is not None:
+            age = _quote_age(cached, now)
+            if age < PRICE_CACHE_TTL_SECONDS:
                 results[symbol] = cached
                 cache_statuses[symbol] = "hit"
                 _log_cache_event("portfolio_quote", "hit")
-            elif symbol in _price_inflight:
-                waiting.append((symbol, _price_inflight[symbol]))
-            else:
-                missing.append(symbol)
-                _log_cache_event("portfolio_quote", "miss")
-                _price_inflight[symbol] = Event()
+                continue
+            if age < PRICE_STALE_TTL_SECONDS:
+                stale_candidates[symbol] = cached
 
-    for symbol, event in waiting:
-        event.wait(PORTFOLIO_PRICE_FETCH_TIMEOUT_SECONDS)
-        with _price_cache_lock:
-            cached = _price_cache.get(symbol)
-            if cached:
-                results[symbol] = cached
+        shared = _shared_cache_get("portfolio-quote", symbol)
+        if shared and shared.get("price") is not None:
+            age = _quote_age(shared, now)
+            if age < PRICE_CACHE_TTL_SECONDS:
+                with _price_cache_lock:
+                    _price_cache[symbol] = shared
+                    _prune_cache(_price_cache, PRICE_CACHE_MAX_ENTRIES)
+                results[symbol] = shared
                 cache_statuses[symbol] = "shared"
+                _log_cache_event("portfolio_quote", "shared")
+                continue
+            if age < PRICE_STALE_TTL_SECONDS:
+                stale_candidates[symbol] = shared
+        elif shared and shared.get("price") is None and _quote_age(shared, now) < PRICE_FAILURE_CACHE_TTL_SECONDS:
+            with _price_cache_lock:
+                _price_cache[symbol] = shared
+                _prune_cache(_price_cache, PRICE_CACHE_MAX_ENTRIES)
+            results[symbol] = shared
+            cache_statuses[symbol] = "error"
+            _log_cache_event("portfolio_quote", "shared_negative_hit")
+            continue
+        elif cached and cached.get("price") is None and _quote_age(cached, now) < PRICE_FAILURE_CACHE_TTL_SECONDS:
+            results[symbol] = cached
+            cache_statuses[symbol] = "error"
+            _log_cache_event("portfolio_quote", "negative_hit")
+            continue
+
+        missing.append(symbol)
+        _log_cache_event("portfolio_quote", "miss")
 
     if missing:
-        futures = {
-            QUOTE_EXECUTOR.submit(_fetch_current_price, symbol): symbol
-            for symbol in missing
-        }
-        completed, timed_out = wait(
-            futures,
-            timeout=PORTFOLIO_PRICE_FETCH_TIMEOUT_SECONDS
-        )
+        with _price_fetch_lock:
+            refresh_symbols = []
+            refresh_now = time.time()
+            for symbol in missing:
+                with _price_cache_lock:
+                    cached = _price_cache.get(symbol)
+                if cached and cached.get("price") is not None and _quote_age(cached, refresh_now) < PRICE_CACHE_TTL_SECONDS:
+                    results[symbol] = cached
+                    cache_statuses[symbol] = "hit"
+                    _log_cache_event("portfolio_quote", "hit")
+                else:
+                    refresh_symbols.append(symbol)
 
-        for future in completed:
-            symbol = futures[future]
-            try:
-                price = future.result()
-            except Exception as exc:
-                print(f"Unexpected portfolio price worker failure for {symbol}: {exc}")
-                price = None
-            quote = {"price": price, "timestamp": time.time()}
-            results[symbol] = quote
-            cache_statuses[symbol] = "miss"
-            with _price_cache_lock:
-                _price_cache[symbol] = quote
-                _prune_cache(_price_cache, PRICE_CACHE_MAX_ENTRIES)
-                _price_inflight.pop(symbol, Event()).set()
+            fetched = {}
+            fetch_failed = False
+            if refresh_symbols:
+                try:
+                    fetched = _fetch_current_prices(refresh_symbols)
+                except Exception as exc:
+                    fetch_failed = True
+                    print(f"Portfolio batch price fetch failed for {len(refresh_symbols)} symbols: {type(exc).__name__}: {exc}")
 
-        for future in timed_out:
-            symbol = futures[future]
-            future.cancel()
-            quote = {"price": None, "timestamp": time.time()}
-            results[symbol] = quote
-            cache_statuses[symbol] = "error"
-            with _price_cache_lock:
-                _price_cache[symbol] = quote
-                _prune_cache(_price_cache, PRICE_CACHE_MAX_ENTRIES)
-                _price_inflight.pop(symbol, Event()).set()
-            print(f"Portfolio price fetch timed out for {symbol}")
+            for symbol in refresh_symbols:
+                price = fetched.get(symbol)
+                if price is not None:
+                    quote = {"price": price, "timestamp": time.time()}
+                    results[symbol] = quote
+                    cache_statuses[symbol] = "miss"
+                    with _price_cache_lock:
+                        _price_cache[symbol] = quote
+                        _prune_cache(_price_cache, PRICE_CACHE_MAX_ENTRIES)
+                    _shared_cache_set("portfolio-quote", symbol, quote, PRICE_STALE_TTL_SECONDS)
+                    continue
 
+                stale = stale_candidates.get(symbol)
+                if stale and _quote_age(stale, time.time()) < PRICE_STALE_TTL_SECONDS:
+                    results[symbol] = stale
+                    cache_statuses[symbol] = "stale"
+                    with _price_cache_lock:
+                        _price_cache[symbol] = stale
+                        _prune_cache(_price_cache, PRICE_CACHE_MAX_ENTRIES)
+                    _log_cache_event("portfolio_quote", "stale")
+                    continue
+
+                quote = {"price": None, "timestamp": time.time()}
+                results[symbol] = quote
+                cache_statuses[symbol] = "error"
+                with _price_cache_lock:
+                    _price_cache[symbol] = quote
+                    _prune_cache(_price_cache, PRICE_CACHE_MAX_ENTRIES)
+                _shared_cache_set("portfolio-quote", symbol, quote, PRICE_FAILURE_CACHE_TTL_SECONDS)
+                _log_cache_event("portfolio_quote", "error" if fetch_failed else "missing")
 
     prices = []
     quote_timestamps = []
