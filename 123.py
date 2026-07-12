@@ -1275,9 +1275,9 @@ def get_basic_data(current_user_uid):
 def get_financial_filings(current_user_uid):
     ticker_symbol = str(request.args.get('ticker', '')).upper().strip()
     if not ticker_symbol:
-        return jsonify({'message': 'Ticker symbol is required'}), 400
+        return jsonify({'error': 'Ticker symbol is required'}), 400
     if not is_valid_ticker(ticker_symbol):
-        return jsonify({'message': 'Invalid ticker symbol'}), 400
+        return jsonify({'error': 'Invalid ticker symbol'}), 400
 
     def section(collection, transform=lambda value: value):
         try:
@@ -1296,7 +1296,7 @@ def get_financial_filings(current_user_uid):
         'ttmSegment': section('ttm_segment_data'),
     }
     if not sections['basic']['available']:
-        return jsonify({'message': f'No financial data found for {ticker_symbol}', 'sections': sections}), 404
+        return jsonify({'error': f'No financial data found for {ticker_symbol}', 'sections': sections}), 404
     return jsonify({'ticker': ticker_symbol, 'sections': sections}), 200
     
 @app.route('/get_segment_data', methods=['GET'])
