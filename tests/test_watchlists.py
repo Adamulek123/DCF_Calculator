@@ -105,6 +105,15 @@ class FakeCollection:
             if len(path) == depth and path[:-1] == self.path
         ]
 
+    def where(self, *args, **kwargs):
+        return self
+
+    def limit(self, count):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
 
 class FakeTransaction:
     def update(self, reference, payload):
@@ -253,6 +262,95 @@ class BackendTestCase(unittest.TestCase):
                 json={"name": "Too many", "tickers": ["AAPL", "MSFT", "NVDA"]},
             )
         self.assertEqual(excess.status_code, 400)
+
+    @staticmethod
+    def calculation_payload():
+        calculation_id = "AAPL-1700000000000"
+        return {
+            "ticker": "AAPL",
+            "name": calculation_id,
+            "data": {
+                "id": calculation_id,
+                "ticker": "AAPL",
+                "currentStockPrice": 198.5,
+                "activeTab": "earnings",
+                "earnings": {
+                    "epsTtm": 7.25,
+                    "growthRate": 12.5,
+                    "peMultiple": 24,
+                },
+                "cashFlow": {
+                    "fcfShare": 6.1,
+                    "fcfGrowthRate": None,
+                    "fcfYield": None,
+                },
+                "desiredReturn": 10,
+                "results": {
+                    "returnFromToday": "12.00%",
+                    "entryPrice": "$180.00",
+                    "desiredReturn": "10.00%",
+                    "priceAfter5Years": "$289.90",
+                },
+                "createdAt": "2026-07-14T12:00:00.000Z",
+            },
+        }
+
+    def test_save_calculation_rejects_non_object_and_malformed_json(self):
+        responses = [
+            self.client.post(
+                "/save_calculation",
+                headers=self.headers,
+                data="{",
+                content_type="application/json",
+            ),
+            self.client.post("/save_calculation", headers=self.headers, json=None),
+            self.client.post("/save_calculation", headers=self.headers, json=[]),
+        ]
+        for response in responses:
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(
+                response.get_json()["error"]["code"], "invalid_calculation"
+            )
+
+    def test_save_calculation_rejects_invalid_id_and_nested_values(self):
+        invalid_id = self.calculation_payload()
+        invalid_id["name"] = "../../another-document"
+
+        invalid_number = self.calculation_payload()
+        invalid_number["data"]["earnings"]["growthRate"] = float("nan")
+
+        unexpected = self.calculation_payload()
+        unexpected["data"]["earnings"]["injected"] = 1
+
+        for payload in (invalid_id, invalid_number, unexpected):
+            response = self.client.post(
+                "/save_calculation", headers=self.headers, json=payload
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(
+                response.get_json()["error"]["code"], "invalid_calculation"
+            )
+
+    def test_save_calculation_normalizes_versioned_document(self):
+        payload = self.calculation_payload()
+        response = self.client.post(
+            "/save_calculation", headers=self.headers, json=payload
+        )
+        self.assertEqual(response.status_code, 200)
+        path = (
+            "users", "user-a", "calculations", payload["name"]
+        )
+        stored = self.database.documents[path]
+        self.assertEqual(stored["schemaVersion"], 1)
+        self.assertEqual(stored["data"]["schemaVersion"], 1)
+        self.assertEqual(stored["data"]["ticker"], "AAPL")
+
+    def test_delete_calculation_rejects_invalid_identifier(self):
+        response = self.client.delete(
+            "/delete_calculation/bad%20id", headers=self.headers
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"]["field"], "path.calc_id")
 
 
 class PerformanceCalculationTests(unittest.TestCase):

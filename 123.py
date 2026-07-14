@@ -14,6 +14,7 @@ import time
 import json
 import base64
 import hashlib
+import math
 import re
 import redis
 from flask_limiter import Limiter
@@ -274,6 +275,10 @@ HISTORY_CACHE_MAX_ENTRIES = 200
 WATCHLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 PORTFOLIO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
+CALCULATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+CALCULATION_TICKER_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9.^=-]{0,19}$")
+CALCULATION_SCHEMA_VERSION = 1
+MAX_CALCULATION_RESULT_LENGTH = 64
 PORTFOLIO_SETTINGS_DOC = "_settings"
 
 def load_tickers_to_cache():
@@ -1515,29 +1520,178 @@ def get_financials_from_firestore(ticker_sym,extracted_data_type):
         print(f"Error retrieving financials for {ticker_sym}: {e}")
         return None
 
+class CalculationPayloadError(ValueError):
+    def __init__(self, field, detail):
+        super().__init__(detail)
+        self.field = field
+        self.detail = detail
+
+
+def _calculation_error_response(error):
+    return jsonify({
+        "message": "Invalid calculation payload.",
+        "error": {
+            "code": "invalid_calculation",
+            "field": error.field,
+            "detail": error.detail,
+        },
+    }), 400
+
+
+def _calculation_object(value, field, required_keys, optional_keys=()):
+    if not isinstance(value, dict):
+        raise CalculationPayloadError(field, "Must be a JSON object.")
+    required = set(required_keys)
+    allowed = required | set(optional_keys)
+    missing = sorted(required - set(value))
+    if missing:
+        raise CalculationPayloadError(f"{field}.{missing[0]}", "Required field is missing.")
+    unexpected = sorted(set(value) - allowed)
+    if unexpected:
+        raise CalculationPayloadError(f"{field}.{unexpected[0]}", "Unexpected field.")
+    return value
+
+
+def _calculation_number(value, field, minimum, maximum, nullable=False):
+    if value is None and nullable:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise CalculationPayloadError(field, "Must be a finite JSON number.")
+    normalized = float(value)
+    if not math.isfinite(normalized):
+        raise CalculationPayloadError(field, "Must be a finite JSON number.")
+    if normalized < minimum or normalized > maximum:
+        raise CalculationPayloadError(field, f"Must be between {minimum:g} and {maximum:g}.")
+    return normalized
+
+
+def _calculation_result(value, field):
+    if not isinstance(value, str) or not value or len(value) > MAX_CALCULATION_RESULT_LENGTH:
+        raise CalculationPayloadError(
+            field,
+            f"Must be a non-empty string of at most {MAX_CALCULATION_RESULT_LENGTH} characters.",
+        )
+    return value
+
+
+def _validate_calculation_payload(value):
+    body = _calculation_object(value, "body", {"ticker", "name", "data"}, {"schemaVersion"})
+    schema_version = body.get("schemaVersion", CALCULATION_SCHEMA_VERSION)
+    if type(schema_version) is not int or schema_version != CALCULATION_SCHEMA_VERSION:
+        raise CalculationPayloadError("body.schemaVersion", f"Must equal {CALCULATION_SCHEMA_VERSION}.")
+
+    calculation_id = str(body["name"] or "").strip()
+    if not CALCULATION_ID_PATTERN.fullmatch(calculation_id):
+        raise CalculationPayloadError(
+            "body.name",
+            "Must be 1-128 characters and contain only letters, numbers, dot, underscore, or hyphen.",
+        )
+
+    ticker = str(body["ticker"] or "").strip().upper()
+    if not CALCULATION_TICKER_PATTERN.fullmatch(ticker):
+        raise CalculationPayloadError("body.ticker", "Invalid ticker format.")
+
+    snapshot = _calculation_object(
+        body["data"],
+        "body.data",
+        {
+            "id", "ticker", "currentStockPrice", "activeTab", "earnings",
+            "cashFlow", "desiredReturn", "results", "createdAt",
+        },
+        {"schemaVersion"},
+    )
+    nested_schema_version = snapshot.get("schemaVersion", CALCULATION_SCHEMA_VERSION)
+    if type(nested_schema_version) is not int or nested_schema_version != CALCULATION_SCHEMA_VERSION:
+        raise CalculationPayloadError("body.data.schemaVersion", f"Must equal {CALCULATION_SCHEMA_VERSION}.")
+    if snapshot["id"] != calculation_id:
+        raise CalculationPayloadError("body.data.id", "Must match body.name.")
+    nested_ticker = str(snapshot["ticker"] or "").strip().upper()
+    if nested_ticker != ticker:
+        raise CalculationPayloadError("body.data.ticker", "Must match body.ticker.")
+
+    active_tab = snapshot["activeTab"]
+    if active_tab not in {"earnings", "cashFlow"}:
+        raise CalculationPayloadError("body.data.activeTab", "Must be earnings or cashFlow.")
+
+    earnings = _calculation_object(
+        snapshot["earnings"], "body.data.earnings", {"epsTtm", "growthRate", "peMultiple"}
+    )
+    cash_flow = _calculation_object(
+        snapshot["cashFlow"], "body.data.cashFlow", {"fcfShare", "fcfGrowthRate", "fcfYield"}
+    )
+    earnings_active = active_tab == "earnings"
+    cash_flow_active = active_tab == "cashFlow"
+    normalized_earnings = {
+        "epsTtm": _calculation_number(earnings["epsTtm"], "body.data.earnings.epsTtm", -1e12, 1e12),
+        "growthRate": _calculation_number(earnings["growthRate"], "body.data.earnings.growthRate", -100, 1e6, not earnings_active),
+        "peMultiple": _calculation_number(earnings["peMultiple"], "body.data.earnings.peMultiple", 0.000001, 1e6, not earnings_active),
+    }
+    normalized_cash_flow = {
+        "fcfShare": _calculation_number(cash_flow["fcfShare"], "body.data.cashFlow.fcfShare", -1e12, 1e12),
+        "fcfGrowthRate": _calculation_number(cash_flow["fcfGrowthRate"], "body.data.cashFlow.fcfGrowthRate", -100, 1e6, not cash_flow_active),
+        "fcfYield": _calculation_number(cash_flow["fcfYield"], "body.data.cashFlow.fcfYield", 0.000001, 1e6, not cash_flow_active),
+    }
+
+    results = _calculation_object(
+        snapshot["results"],
+        "body.data.results",
+        {"returnFromToday", "entryPrice", "desiredReturn", "priceAfter5Years"},
+    )
+    normalized_results = {
+        key: _calculation_result(results[key], f"body.data.results.{key}")
+        for key in ("returnFromToday", "entryPrice", "desiredReturn", "priceAfter5Years")
+    }
+
+    created_at = snapshot["createdAt"]
+    if not isinstance(created_at, str) or not created_at or len(created_at) > 40:
+        raise CalculationPayloadError("body.data.createdAt", "Must be a bounded ISO-8601 timestamp.")
+    try:
+        parsed_created_at = datetime.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise CalculationPayloadError("body.data.createdAt", "Must be a valid ISO-8601 timestamp.") from error
+    if parsed_created_at.tzinfo is None:
+        raise CalculationPayloadError("body.data.createdAt", "Timestamp must include a timezone.")
+
+    return {
+        "schemaVersion": CALCULATION_SCHEMA_VERSION,
+        "id": calculation_id,
+        "ticker": ticker,
+        "currentStockPrice": _calculation_number(snapshot["currentStockPrice"], "body.data.currentStockPrice", 0, 1e12),
+        "activeTab": active_tab,
+        "earnings": normalized_earnings,
+        "cashFlow": normalized_cash_flow,
+        "desiredReturn": _calculation_number(snapshot["desiredReturn"], "body.data.desiredReturn", -99.99, 1e6),
+        "results": normalized_results,
+        "createdAt": parsed_created_at.astimezone(datetime.timezone.utc).isoformat(),
+    }
+
+
 @app.route('/save_calculation', methods=['POST'])
 @firebase_token_required 
 def save_calculation(current_user_uid): 
+    data = request.get_json(silent=True)
+    try:
+        calculation_data = _validate_calculation_payload(data)
+    except CalculationPayloadError as error:
+        return _calculation_error_response(error)
+
     if not db:
         return jsonify({'message': 'Database not configured, cannot save calculation.'}), 500
-    data = request.get_json()
-    ticker = data.get('ticker')
-    name = data.get('name')
-    calculation_data = data.get('data')
-
-    if not ticker or not name or not calculation_data:
-        return jsonify({'message': 'Missing data for saving calculation'}), 400
 
     try:
         user_calculations_ref = db.collection('users').document(current_user_uid).collection('calculations')
-        doc_ref = user_calculations_ref.document(name) 
+        doc_ref = user_calculations_ref.document(calculation_data['id'])
         doc_ref.set({
-            'ticker': ticker,
-            'name': name,
+            'schemaVersion': CALCULATION_SCHEMA_VERSION,
+            'ticker': calculation_data['ticker'],
+            'name': calculation_data['id'],
             'data': calculation_data,
             'timestamp': firestore.SERVER_TIMESTAMP
         })
-        return jsonify({'message': f'Calculation "{name}" for {ticker} saved successfully!'}), 200
+        return jsonify({
+            'message': f'Calculation "{calculation_data["id"]}" for {calculation_data["ticker"]} saved successfully!',
+            'schemaVersion': CALCULATION_SCHEMA_VERSION,
+        }), 200
     except Exception as e:
         print(f"Save calculation failed: {e}")
         return jsonify({'message': 'Unable to save calculation.'}), 500
@@ -2158,10 +2312,12 @@ def get_portfolio_conversion_rates(current_user_uid):
 @app.route('/delete_calculation/<string:calc_id>', methods=['DELETE'])
 @firebase_token_required 
 def delete_calculation(current_user_uid, calc_id): 
+    if not CALCULATION_ID_PATTERN.fullmatch(str(calc_id or "")):
+        return _calculation_error_response(CalculationPayloadError(
+            "path.calc_id", "Invalid calculation identifier."
+        ))
     if not db:
         return jsonify({'message': 'Database not configured, cannot delete calculation.'}), 500
-    if not calc_id:
-        return jsonify({'message': 'Calculation ID is required'}), 400
     
     try:
         doc_ref = db.collection('users').document(current_user_uid).collection('calculations').document(calc_id)
