@@ -1695,14 +1695,23 @@ def update_watchlist(current_user_uid, watchlist_id):
             if tickers is not None:
                 updates["tickers"] = tickers
             transaction.update(doc_ref, updates)
-            return next_revision
+            return current, next_revision
 
-        next_revision = update_in_transaction(transaction)
-        if next_revision is None:
+        result = update_in_transaction(transaction)
+        if result is None:
             return jsonify({"message": "Watchlist not found."}), 404
 
-        canonical = _serialize_watchlist(doc_ref.get())
-        canonical["revision"] = next_revision
+        current, next_revision = result
+        response_payload = {
+            **current,
+            "revision": next_revision,
+            "updatedAt": _utc_now(),
+        }
+        if name is not None:
+            response_payload["name"] = name
+        if tickers is not None:
+            response_payload["tickers"] = tickers
+        canonical = _serialize_watchlist(watchlist_id, response_payload)
         return jsonify(canonical), 200
     except ValueError as exc:
         if str(exc) == "REVISION_CONFLICT":
