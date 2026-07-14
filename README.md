@@ -204,13 +204,43 @@ Example save body:
 
 ```json
 {
+  "schemaVersion": 1,
   "ticker": "AAPL",
-  "name": "Apple base case",
+  "name": "AAPL-1700000000000",
   "data": {
-    "model": "earnings"
+    "schemaVersion": 1,
+    "id": "AAPL-1700000000000",
+    "ticker": "AAPL",
+    "currentStockPrice": 198.5,
+    "activeTab": "earnings",
+    "earnings": {
+      "epsTtm": 7.25,
+      "growthRate": 12.5,
+      "peMultiple": 24
+    },
+    "cashFlow": {
+      "fcfShare": 6.1,
+      "fcfGrowthRate": null,
+      "fcfYield": null
+    },
+    "desiredReturn": 10,
+    "results": {
+      "returnFromToday": "12.00%",
+      "entryPrice": "$180.00",
+      "desiredReturn": "10.00%",
+      "priceAfter5Years": "$289.90"
+    },
+    "createdAt": "2026-07-14T12:00:00.000Z"
   }
 }
 ```
+
+Schema version 1 requires an ID of 1–128 safe characters, a bounded ticker,
+one of `earnings` or `cashFlow` as the active tab, finite bounded numbers for
+the active model, bounded result strings, and a timezone-aware ISO-8601
+timestamp. Assumptions for the inactive model may be `null`. Unknown or
+missing fields and unsupported schema versions return a structured `400`
+response with `error.code`, `error.field`, and `error.detail`.
 
 ### Portfolio
 
