@@ -275,7 +275,7 @@ HISTORY_CACHE_MAX_ENTRIES = 200
 WATCHLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 PORTFOLIO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
-CALCULATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+CALCULATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.^=-]{0,127}$")
 CALCULATION_TICKER_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9.^=-]{0,19}$")
 CALCULATION_SCHEMA_VERSION = 1
 MAX_CALCULATION_RESULT_LENGTH = 64
@@ -1622,12 +1622,12 @@ def _validate_calculation_payload(value):
     earnings_active = active_tab == "earnings"
     cash_flow_active = active_tab == "cashFlow"
     normalized_earnings = {
-        "epsTtm": _calculation_number(earnings["epsTtm"], "body.data.earnings.epsTtm", -1e12, 1e12),
+        "epsTtm": _calculation_number(earnings["epsTtm"], "body.data.earnings.epsTtm", -1e12, 1e12, not earnings_active),
         "growthRate": _calculation_number(earnings["growthRate"], "body.data.earnings.growthRate", -100, 1e6, not earnings_active),
         "peMultiple": _calculation_number(earnings["peMultiple"], "body.data.earnings.peMultiple", 0.000001, 1e6, not earnings_active),
     }
     normalized_cash_flow = {
-        "fcfShare": _calculation_number(cash_flow["fcfShare"], "body.data.cashFlow.fcfShare", -1e12, 1e12),
+        "fcfShare": _calculation_number(cash_flow["fcfShare"], "body.data.cashFlow.fcfShare", -1e12, 1e12, not cash_flow_active),
         "fcfGrowthRate": _calculation_number(cash_flow["fcfGrowthRate"], "body.data.cashFlow.fcfGrowthRate", -100, 1e6, not cash_flow_active),
         "fcfYield": _calculation_number(cash_flow["fcfYield"], "body.data.cashFlow.fcfYield", 0.000001, 1e6, not cash_flow_active),
     }

@@ -345,6 +345,34 @@ class BackendTestCase(unittest.TestCase):
         self.assertEqual(stored["data"]["schemaVersion"], 1)
         self.assertEqual(stored["data"]["ticker"], "AAPL")
 
+    def test_save_calculation_accepts_generated_ids_and_inactive_nulls(self):
+        earnings_payload = self.calculation_payload()
+        earnings_payload["name"] = "BRK=B-1700000000000"
+        earnings_payload["ticker"] = "BRK=B"
+        earnings_payload["data"]["id"] = earnings_payload["name"]
+        earnings_payload["data"]["ticker"] = earnings_payload["ticker"]
+        earnings_payload["data"]["cashFlow"]["fcfShare"] = None
+
+        cash_flow_payload = self.calculation_payload()
+        cash_flow_payload["name"] = "BRK=A-1700000000000"
+        cash_flow_payload["ticker"] = "BRK=A"
+        cash_flow_payload["data"]["id"] = cash_flow_payload["name"]
+        cash_flow_payload["data"]["ticker"] = cash_flow_payload["ticker"]
+        cash_flow_payload["data"]["activeTab"] = "cashFlow"
+        cash_flow_payload["data"]["cashFlow"]["fcfGrowthRate"] = 10
+        cash_flow_payload["data"]["cashFlow"]["fcfYield"] = 5
+        cash_flow_payload["data"]["earnings"] = {
+            "epsTtm": None,
+            "growthRate": None,
+            "peMultiple": None,
+        }
+
+        for payload in (earnings_payload, cash_flow_payload):
+            response = self.client.post(
+                "/save_calculation", headers=self.headers, json=payload
+            )
+            self.assertEqual(response.status_code, 200)
+
     def test_delete_calculation_rejects_invalid_identifier(self):
         response = self.client.delete(
             "/delete_calculation/bad%20id", headers=self.headers
