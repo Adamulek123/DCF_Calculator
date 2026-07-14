@@ -182,6 +182,7 @@ class BackendTestCase(unittest.TestCase):
         payload = created.get_json()
         self.assertEqual(payload["name"], "Core dips")
         self.assertEqual(payload["tickers"], ["AAPL", "MSFT"])
+        self.assertEqual(payload["revision"], 0)
 
         duplicate = self.client.post(
             "/watchlists",
@@ -197,10 +198,11 @@ class BackendTestCase(unittest.TestCase):
         renamed = self.client.patch(
             f"/watchlists/{payload['id']}",
             headers=self.headers,
-            json={"name": "Pullbacks", "tickers": ["NVDA"]},
+            json={"name": "Pullbacks", "tickers": ["NVDA"], "baseRevision": 0},
         )
         self.assertEqual(renamed.status_code, 200)
         self.assertEqual(renamed.get_json()["tickers"], ["NVDA"])
+        self.assertEqual(renamed.get_json()["revision"], 1)
         self.assertEqual(
             self.client.delete(
                 f"/watchlists/{payload['id']}", headers=self.headers
@@ -222,6 +224,42 @@ class BackendTestCase(unittest.TestCase):
         response = self.client.get("/watchlists", headers=self.headers)
         self.assertEqual(response.get_json()["watchlists"], [])
 
+    def test_patch_rejects_stale_revision_with_canonical_watchlist(self):
+        created = self.client.post(
+            "/watchlists",
+            headers=self.headers,
+            json={"name": "Concurrent", "tickers": ["AAPL"]},
+        ).get_json()
+
+        first = self.client.patch(
+            f"/watchlists/{created['id']}",
+            headers=self.headers,
+            json={
+                "tickers": ["AAPL", "MSFT"],
+                "baseRevision": created["revision"],
+            },
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.get_json()["revision"], 1)
+
+        stale = self.client.patch(
+            f"/watchlists/{created['id']}",
+            headers=self.headers,
+            json={"tickers": ["NVDA"], "baseRevision": created["revision"]},
+        )
+        self.assertEqual(stale.status_code, 409)
+        conflict = stale.get_json()
+        self.assertEqual(conflict["code"], "REVISION_CONFLICT")
+        self.assertEqual(conflict["watchlist"]["revision"], 1)
+        self.assertEqual(conflict["watchlist"]["tickers"], ["AAPL", "MSFT"])
+
+        missing_precondition = self.client.patch(
+            f"/watchlists/{created['id']}",
+            headers=self.headers,
+            json={"name": "No precondition"},
+        )
+        self.assertEqual(missing_precondition.status_code, 400)
+
     def test_transactional_merge_preserves_order_and_skips_duplicates(self):
         created = self.client.post(
             "/watchlists",
@@ -236,6 +274,7 @@ class BackendTestCase(unittest.TestCase):
         self.assertEqual(merged.status_code, 200)
         payload = merged.get_json()
         self.assertEqual(payload["watchlist"]["tickers"], ["AAPL", "MSFT", "NVDA"])
+        self.assertEqual(payload["watchlist"]["revision"], 1)
         self.assertEqual(payload["addedCount"], 1)
         self.assertEqual(payload["skippedCount"], 2)
 
