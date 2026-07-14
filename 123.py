@@ -909,26 +909,34 @@ def _serialize_portfolio_summary(doc_or_id, payload=None):
         "name": _portfolio_name(portfolio_id, payload),
         "positionCount": max(0, int(payload.get("positionCount") or 0)),
         "baseCurrency": str(payload.get("baseCurrency", "USD")).upper(),
+        "revision": max(0, int(payload.get("revision") or 0)),
         "createdAt": _iso_timestamp(payload.get("createdAt")),
         "updatedAt": _iso_timestamp(payload.get("updatedAt")),
     }
 
 
 def _list_portfolio_summary_docs(uid):
-    return list(_portfolios_ref(uid).select([
-        "name", "baseCurrency", "positionCount", "createdAt", "updatedAt",
-    ]).stream())
+    return [
+        doc for doc in _portfolios_ref(uid).select([
+            "name", "baseCurrency", "positionCount", "revision", "createdAt", "updatedAt",
+        ]).stream()
+        if doc.id != PORTFOLIO_SETTINGS_DOC
+    ]
 
 
-def _serialize_portfolio_detail(doc):
-    payload = doc.to_dict() or {}
+def _serialize_portfolio_detail(doc_or_id, payload=None):
+    if payload is None:
+        payload = doc_or_id.to_dict() or {}
+        portfolio_id = doc_or_id.id
+    else:
+        portfolio_id = str(doc_or_id)
     positions = payload.get('positions') if isinstance(payload.get('positions'), list) else []
     base_currency = str(payload.get('baseCurrency', 'USD')).strip().upper()
     if len(base_currency) != 3:
         base_currency = 'USD'
     return {
-        'portfolioId': doc.id,
-        'name': _portfolio_name(doc.id, payload),
+        'portfolioId': portfolio_id,
+        'name': _portfolio_name(portfolio_id, payload),
         'positions': positions,
         'baseCurrency': base_currency,
         'tickerMetadata': _ticker_metadata_for_positions(positions),
@@ -972,24 +980,44 @@ def _ensure_portfolio_docs(uid):
         "positions": [],
         "positionCount": 0,
         "baseCurrency": "USD",
+        "revision": 0,
         "createdAt": firestore.SERVER_TIMESTAMP,
         "updatedAt": firestore.SERVER_TIMESTAMP,
     })
     _portfolios_ref(uid).document(PORTFOLIO_SETTINGS_DOC).set({
-        "activePortfolioId": "default"
+        "activePortfolioId": "default",
+        "activationRevision": 0,
     }, merge=True)
     return _list_portfolio_docs(uid)
 
 
-def _active_portfolio_id(uid, docs):
+def _active_portfolio_state(uid, docs):
     ids = {doc.id for doc in docs}
     settings_ref = _portfolios_ref(uid).document(PORTFOLIO_SETTINGS_DOC)
     settings = settings_ref.get()
-    active_id = (settings.to_dict() or {}).get("activePortfolioId") if settings.exists else None
+    payload = (settings.to_dict() or {}) if settings.exists else {}
+    active_id = payload.get("activePortfolioId")
+    activation_revision = max(0, int(payload.get("activationRevision") or 0))
     if active_id not in ids:
-        active_id = "default" if "default" in ids else docs[0].id
-        settings_ref.set({"activePortfolioId": active_id}, merge=True)
-    return active_id
+        active_id = "default" if "default" in ids else (docs[0].id if docs else None)
+        if active_id:
+            settings_ref.set({
+                "activePortfolioId": active_id,
+                "activationRevision": activation_revision,
+            }, merge=True)
+    return active_id, activation_revision
+
+
+def _active_portfolio_id(uid, docs):
+    return _active_portfolio_state(uid, docs)[0]
+
+
+class PortfolioRevisionConflict(Exception):
+    pass
+
+
+class ActivationRevisionConflict(Exception):
+    pass
 
 
 def _portfolio_name_conflict(docs, name, ignored_id=None):
@@ -1806,13 +1834,14 @@ def list_portfolios(current_user_uid):
         return jsonify({"message": "Portfolio storage is unavailable."}), 503
     try:
         docs = _ensure_portfolio_docs(current_user_uid)
-        active_id = _active_portfolio_id(current_user_uid, docs)
+        active_id, activation_revision = _active_portfolio_state(current_user_uid, docs)
         portfolios = [_serialize_portfolio_summary(doc) for doc in _list_portfolio_summary_docs(current_user_uid)]
         portfolios.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
         source_updates = [item.get("updatedAt") for item in portfolios if item.get("updatedAt")]
         return _conditional_json(_with_freshness({
             "portfolios": portfolios,
             "activePortfolioId": active_id,
+            "activationRevision": activation_revision,
         }, max(source_updates, default=None)))
     except Exception as exc:
         return _firestore_error_response("load portfolios", exc)
@@ -1826,7 +1855,7 @@ def bootstrap_portfolio(current_user_uid):
         return jsonify({"message": "Portfolio storage is unavailable."}), 503
     try:
         docs = _ensure_portfolio_docs(current_user_uid)
-        active_id = _active_portfolio_id(current_user_uid, docs)
+        active_id, activation_revision = _active_portfolio_state(current_user_uid, docs)
         active_doc = _portfolios_ref(current_user_uid).document(active_id).get()
         if not active_doc.exists:
             return jsonify({"message": "Active portfolio not found."}), 404
@@ -1836,6 +1865,7 @@ def bootstrap_portfolio(current_user_uid):
         return _conditional_json(_with_freshness({
             "portfolios": portfolios,
             "activePortfolioId": active_id,
+            "activationRevision": activation_revision,
             "activePortfolio": active_detail,
         }, active_detail.get("updatedAt")))
     except Exception as exc:
@@ -1868,10 +1898,12 @@ def create_portfolio(current_user_uid):
             if existing_doc.exists:
                 existing = existing_doc.to_dict() or {}
                 if idempotency_key and existing.get("createOperationId") == idempotency_key:
+                    active_id, activation_revision = _active_portfolio_state(current_user_uid, docs)
                     return jsonify({
                         "portfolio": _serialize_portfolio_summary(existing_doc),
                         "canonicalPortfolio": _serialize_portfolio_detail(existing_doc),
-                        "activePortfolioId": _active_portfolio_id(current_user_uid, docs),
+                        "activePortfolioId": active_id,
+                        "activationRevision": activation_revision,
                         "idempotentReplay": True,
                     }), 200
                 return jsonify({"message": "A portfolio with that ID already exists."}), 409
@@ -1894,8 +1926,11 @@ def create_portfolio(current_user_uid):
         }
         doc_ref = doc_ref or _portfolios_ref(current_user_uid).document()
         doc_ref.set(payload)
+        _, activation_revision = _active_portfolio_state(current_user_uid, docs)
+        activation_revision += 1
         _portfolios_ref(current_user_uid).document(PORTFOLIO_SETTINGS_DOC).set({
-            "activePortfolioId": doc_ref.id
+            "activePortfolioId": doc_ref.id,
+            "activationRevision": activation_revision,
         }, merge=True)
         response_payload = {
             **payload,
@@ -1906,6 +1941,7 @@ def create_portfolio(current_user_uid):
             "portfolio": _serialize_portfolio_summary(doc_ref.id, response_payload),
             "canonicalPortfolio": _serialize_portfolio_detail(doc_ref.id, response_payload),
             "activePortfolioId": doc_ref.id,
+            "activationRevision": activation_revision,
         }), 201
     except Exception as exc:
         return _firestore_error_response("create portfolio", exc)
@@ -1925,23 +1961,54 @@ def update_portfolio(current_user_uid, portfolio_id):
     name, name_error = _normalize_portfolio_name(data.get("name"))
     if name_error:
         return jsonify({"message": name_error}), 400
+    base_revision = data.get("baseRevision")
+    if type(base_revision) is not int or base_revision < 0:
+        return jsonify({"message": "baseRevision must be a non-negative integer."}), 400
     try:
-        docs = _list_portfolio_docs(current_user_uid)
-        current_doc = next((doc for doc in docs if doc.id == portfolio_id), None)
-        if current_doc is None:
+        portfolios_ref = _portfolios_ref(current_user_uid)
+        doc_ref = portfolios_ref.document(portfolio_id)
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def rename_in_transaction(transaction):
+            docs = [
+                doc for doc in portfolios_ref.stream(transaction=transaction)
+                if doc.id != PORTFOLIO_SETTINGS_DOC
+            ]
+            current_doc = next((doc for doc in docs if doc.id == portfolio_id), None)
+            if current_doc is None:
+                return None
+            current = current_doc.to_dict() or {}
+            current_revision = max(0, int(current.get("revision") or 0))
+            if current_revision != base_revision:
+                raise PortfolioRevisionConflict()
+            if _portfolio_name_conflict(docs, name, ignored_id=portfolio_id):
+                return "NAME_CONFLICT"
+            next_revision = current_revision + 1
+            transaction.update(doc_ref, {
+                "name": name,
+                "revision": next_revision,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            })
+            return next_revision
+
+        result = rename_in_transaction(transaction)
+        if result is None:
             return jsonify({"message": "Portfolio not found."}), 404
-        if _portfolio_name_conflict(docs, name, ignored_id=portfolio_id):
-            return jsonify({"message": "A portfolio with this name already exists."}), 409
-        current = current_doc.to_dict() or {}
-        current_doc.reference.update({
-            "name": name,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-        })
-        return jsonify(_serialize_portfolio_summary(portfolio_id, {
-            **current,
-            "name": name,
-            "updatedAt": _utc_now(),
-        })), 200
+        if result == "NAME_CONFLICT":
+            return jsonify({
+                "message": "A portfolio with this name already exists.",
+                "code": "NAME_CONFLICT",
+            }), 409
+        return jsonify(_serialize_portfolio_summary(doc_ref.get())), 200
+    except PortfolioRevisionConflict:
+        canonical_doc = doc_ref.get()
+        canonical = _serialize_portfolio_detail(canonical_doc) if canonical_doc.exists else None
+        return jsonify({
+            "message": "Portfolio changed on another device. Reload before renaming.",
+            "code": "REVISION_CONFLICT",
+            "portfolio": canonical,
+        }), 409
     except Exception as exc:
         return _firestore_error_response("rename portfolio", exc)
 
@@ -1954,23 +2021,74 @@ def delete_portfolio(current_user_uid, portfolio_id):
         return jsonify({"message": "Portfolio storage is unavailable."}), 503
     if not _valid_portfolio_id(portfolio_id):
         return jsonify({"message": "Invalid portfolio ID."}), 400
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required."}), 400
+    base_revision = data.get("baseRevision")
+    if type(base_revision) is not int or base_revision < 0:
+        return jsonify({"message": "baseRevision must be a non-negative integer."}), 400
     try:
-        docs = _list_portfolio_docs(current_user_uid)
-        current_doc = next((doc for doc in docs if doc.id == portfolio_id), None)
-        if current_doc is None:
+        portfolios_ref = _portfolios_ref(current_user_uid)
+        doc_ref = portfolios_ref.document(portfolio_id)
+        settings_ref = portfolios_ref.document(PORTFOLIO_SETTINGS_DOC)
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def delete_in_transaction(transaction):
+            docs = [
+                doc for doc in portfolios_ref.stream(transaction=transaction)
+                if doc.id != PORTFOLIO_SETTINGS_DOC
+            ]
+            current_doc = next((doc for doc in docs if doc.id == portfolio_id), None)
+            if current_doc is None:
+                return None
+            current = current_doc.to_dict() or {}
+            current_revision = max(0, int(current.get("revision") or 0))
+            if current_revision != base_revision:
+                raise PortfolioRevisionConflict()
+            if len(docs) <= 1:
+                return "LAST_PORTFOLIO"
+
+            settings_doc = settings_ref.get(transaction=transaction)
+            settings = (settings_doc.to_dict() or {}) if settings_doc.exists else {}
+            stored_active_id = settings.get("activePortfolioId")
+            current_activation_revision = max(0, int(settings.get("activationRevision") or 0))
+            ids = {doc.id for doc in docs}
+            active_id = stored_active_id if stored_active_id in ids else (
+                "default" if "default" in ids else docs[0].id
+            )
+            remaining = [doc for doc in docs if doc.id != portfolio_id]
+            next_active_id = active_id if active_id != portfolio_id else (
+                "default" if any(doc.id == "default" for doc in remaining) else remaining[0].id
+            )
+            next_activation_revision = current_activation_revision
+            transaction.delete(doc_ref)
+            if next_active_id != stored_active_id:
+                next_activation_revision += 1
+                transaction.set(settings_ref, {
+                    "activePortfolioId": next_active_id,
+                    "activationRevision": next_activation_revision,
+                }, merge=True)
+            return next_active_id, next_activation_revision
+
+        result = delete_in_transaction(transaction)
+        if result is None:
             return jsonify({"message": "Portfolio not found."}), 404
-        if len(docs) <= 1:
+        if result == "LAST_PORTFOLIO":
             return jsonify({"message": "At least one portfolio must remain."}), 409
-        active_id = _active_portfolio_id(current_user_uid, docs)
-        remaining = [doc for doc in docs if doc.id != portfolio_id]
-        next_active_id = active_id if active_id != portfolio_id else (
-            "default" if any(doc.id == "default" for doc in remaining) else remaining[0].id
-        )
-        current_doc.reference.delete()
-        _portfolios_ref(current_user_uid).document(PORTFOLIO_SETTINGS_DOC).set({
-            "activePortfolioId": next_active_id
-        }, merge=True)
-        return jsonify({"activePortfolioId": next_active_id}), 200
+        next_active_id, activation_revision = result
+        return jsonify({
+            "activePortfolioId": next_active_id,
+            "activationRevision": activation_revision,
+        }), 200
+    except PortfolioRevisionConflict:
+        canonical_doc = doc_ref.get()
+        canonical = _serialize_portfolio_detail(canonical_doc) if canonical_doc.exists else None
+        return jsonify({
+            "message": "Portfolio changed on another device. Reload before deleting.",
+            "code": "REVISION_CONFLICT",
+            "portfolio": canonical,
+        }), 409
     except Exception as exc:
         return _firestore_error_response("delete portfolio", exc)
 
@@ -1983,14 +2101,55 @@ def activate_portfolio(current_user_uid, portfolio_id):
         return jsonify({"message": "Portfolio storage is unavailable."}), 503
     if not _valid_portfolio_id(portfolio_id):
         return jsonify({"message": "Invalid portfolio ID."}), 400
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required."}), 400
+    base_activation_revision = data.get("baseActivationRevision")
+    if type(base_activation_revision) is not int or base_activation_revision < 0:
+        return jsonify({
+            "message": "baseActivationRevision must be a non-negative integer."
+        }), 400
     try:
-        doc_ref = _portfolios_ref(current_user_uid).document(portfolio_id)
-        if not doc_ref.get().exists:
+        portfolios_ref = _portfolios_ref(current_user_uid)
+        doc_ref = portfolios_ref.document(portfolio_id)
+        settings_ref = portfolios_ref.document(PORTFOLIO_SETTINGS_DOC)
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def activate_in_transaction(transaction):
+            target_doc = doc_ref.get(transaction=transaction)
+            if not target_doc.exists:
+                return None
+            settings_doc = settings_ref.get(transaction=transaction)
+            settings = (settings_doc.to_dict() or {}) if settings_doc.exists else {}
+            current_revision = max(0, int(settings.get("activationRevision") or 0))
+            if current_revision != base_activation_revision:
+                raise ActivationRevisionConflict()
+            if settings.get("activePortfolioId") == portfolio_id:
+                return current_revision
+            next_revision = current_revision + 1
+            transaction.set(settings_ref, {
+                "activePortfolioId": portfolio_id,
+                "activationRevision": next_revision,
+            }, merge=True)
+            return next_revision
+
+        activation_revision = activate_in_transaction(transaction)
+        if activation_revision is None:
             return jsonify({"message": "Portfolio not found."}), 404
-        _portfolios_ref(current_user_uid).document(PORTFOLIO_SETTINGS_DOC).set({
-            "activePortfolioId": portfolio_id
-        }, merge=True)
-        return jsonify({"activePortfolioId": portfolio_id}), 200
+        return jsonify({
+            "activePortfolioId": portfolio_id,
+            "activationRevision": activation_revision,
+        }), 200
+    except ActivationRevisionConflict:
+        docs = _list_portfolio_docs(current_user_uid)
+        active_id, activation_revision = _active_portfolio_state(current_user_uid, docs)
+        return jsonify({
+            "message": "Active portfolio changed on another device. Reload before switching.",
+            "code": "ACTIVATION_CONFLICT",
+            "activePortfolioId": active_id,
+            "activationRevision": activation_revision,
+        }), 409
     except Exception as exc:
         return _firestore_error_response("activate portfolio", exc)
 

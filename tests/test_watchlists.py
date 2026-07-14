@@ -74,8 +74,13 @@ class FakeDocument:
         payload = self.database.documents.get(self.path)
         return FakeSnapshot(self, payload)
 
-    def set(self, payload):
-        self.database.documents[self.path] = self.database.resolve_timestamps(payload)
+    def set(self, payload, merge=False):
+        normalized = self.database.resolve_timestamps(payload)
+        if merge:
+            current = dict(self.database.documents.get(self.path, {}))
+            current.update(normalized)
+            normalized = current
+        self.database.documents[self.path] = normalized
 
     def update(self, payload):
         current = dict(self.database.documents.get(self.path, {}))
@@ -97,7 +102,7 @@ class FakeCollection:
             document_id = f"watchlist_{self.database.counter:04d}"
         return FakeDocument(self.database, self.path + (document_id,))
 
-    def stream(self):
+    def stream(self, transaction=None):
         depth = len(self.path) + 1
         return [
             FakeSnapshot(FakeDocument(self.database, path), payload)
@@ -105,10 +110,25 @@ class FakeCollection:
             if len(path) == depth and path[:-1] == self.path
         ]
 
+    def select(self, fields):
+        return self
+
+    def where(self, *args, **kwargs):
+        return self
+
+    def limit(self, count):
+        return self
+
 
 class FakeTransaction:
     def update(self, reference, payload):
         reference.update(payload)
+
+    def set(self, reference, payload, merge=False):
+        reference.set(payload, merge=merge)
+
+    def delete(self, reference):
+        reference.delete()
 
 
 class FakeDatabase:
@@ -253,6 +273,132 @@ class BackendTestCase(unittest.TestCase):
                 json={"name": "Too many", "tickers": ["AAPL", "MSFT", "NVDA"]},
             )
         self.assertEqual(excess.status_code, 400)
+
+
+    def seed_portfolio(self, portfolio_id, name, revision, positions=None):
+        self.database.documents[(
+            "users", "user-a", "portfolio", portfolio_id
+        )] = {
+            "name": name,
+            "positions": list(positions or []),
+            "positionCount": len(positions or []),
+            "baseCurrency": "USD",
+            "revision": revision,
+            "createdAt": datetime.datetime.now(datetime.timezone.utc),
+            "updatedAt": datetime.datetime.now(datetime.timezone.utc),
+        }
+
+    def seed_portfolio_settings(self, active_id, activation_revision):
+        self.database.documents[(
+            "users", "user-a", "portfolio", backend.PORTFOLIO_SETTINGS_DOC
+        )] = {
+            "activePortfolioId": active_id,
+            "activationRevision": activation_revision,
+        }
+
+    def test_portfolio_index_exposes_resource_and_activation_revisions(self):
+        self.seed_portfolio("p1", "One", 3)
+        self.seed_portfolio("p2", "Two", 7)
+        self.seed_portfolio_settings("p1", 5)
+
+        response = self.client.get("/portfolios", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["activationRevision"], 5)
+        self.assertEqual(
+            {item["id"]: item["revision"] for item in payload["portfolios"]},
+            {"p1": 3, "p2": 7},
+        )
+
+    def test_rename_requires_current_revision_and_advances_it(self):
+        self.seed_portfolio("p1", "One", 3)
+        self.seed_portfolio("p2", "Two", 0)
+        self.seed_portfolio_settings("p1", 2)
+
+        stale = self.client.patch(
+            "/portfolios/p1",
+            headers=self.headers,
+            json={"name": "Renamed", "baseRevision": 2},
+        )
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(stale.get_json()["code"], "REVISION_CONFLICT")
+        self.assertEqual(stale.get_json()["portfolio"]["revision"], 3)
+
+        renamed = self.client.patch(
+            "/portfolios/p1",
+            headers=self.headers,
+            json={"name": "Renamed", "baseRevision": 3},
+        )
+        self.assertEqual(renamed.status_code, 200)
+        self.assertEqual(renamed.get_json()["revision"], 4)
+        self.assertEqual(renamed.get_json()["name"], "Renamed")
+
+    def test_delete_requires_current_revision(self):
+        self.seed_portfolio("p1", "One", 4)
+
+        stale_position_save = self.client.post(
+            "/portfolio/save",
+            headers=self.headers,
+            json={
+                "portfolioId": "p1",
+                "positions": [],
+                "baseCurrency": "USD",
+                "baseRevision": 3,
+            },
+        )
+        self.assertEqual(stale_position_save.status_code, 409)
+        self.assertEqual(stale_position_save.get_json()["code"], "REVISION_CONFLICT")
+        self.seed_portfolio("p2", "Two", 0)
+        self.seed_portfolio_settings("p1", 8)
+
+        stale = self.client.delete(
+            "/portfolios/p1",
+            headers=self.headers,
+            json={"baseRevision": 3},
+        )
+        self.assertEqual(stale.status_code, 409)
+        self.assertIn(("users", "user-a", "portfolio", "p1"), self.database.documents)
+
+        deleted = self.client.delete(
+            "/portfolios/p1",
+            headers=self.headers,
+            json={"baseRevision": 4},
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.get_json()["activePortfolioId"], "p2")
+        self.assertEqual(deleted.get_json()["activationRevision"], 9)
+        self.assertNotIn(("users", "user-a", "portfolio", "p1"), self.database.documents)
+
+    def test_stale_activation_cannot_overwrite_newer_selection(self):
+        self.seed_portfolio("p1", "One", 0)
+        self.seed_portfolio("p2", "Two", 0)
+        self.seed_portfolio_settings("p1", 4)
+
+        stale = self.client.post(
+            "/portfolios/p2/activate",
+            headers=self.headers,
+            json={"baseActivationRevision": 3},
+        )
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(stale.get_json()["activePortfolioId"], "p1")
+        self.assertEqual(stale.get_json()["activationRevision"], 4)
+
+        switched = self.client.post(
+            "/portfolios/p2/activate",
+            headers=self.headers,
+            json={"baseActivationRevision": 4},
+        )
+        self.assertEqual(switched.status_code, 200)
+        self.assertEqual(switched.get_json()["activationRevision"], 5)
+
+        delayed = self.client.post(
+            "/portfolios/p1/activate",
+            headers=self.headers,
+            json={"baseActivationRevision": 4},
+        )
+        self.assertEqual(delayed.status_code, 409)
+        self.assertEqual(delayed.get_json()["activePortfolioId"], "p2")
+        self.assertEqual(delayed.get_json()["activationRevision"], 5)
 
 
 class PerformanceCalculationTests(unittest.TestCase):
