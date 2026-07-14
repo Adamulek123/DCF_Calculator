@@ -1926,12 +1926,22 @@ def create_portfolio(current_user_uid):
         }
         doc_ref = doc_ref or _portfolios_ref(current_user_uid).document()
         doc_ref.set(payload)
-        _, activation_revision = _active_portfolio_state(current_user_uid, docs)
-        activation_revision += 1
-        _portfolios_ref(current_user_uid).document(PORTFOLIO_SETTINGS_DOC).set({
-            "activePortfolioId": doc_ref.id,
-            "activationRevision": activation_revision,
-        }, merge=True)
+        settings_ref = _portfolios_ref(current_user_uid).document(PORTFOLIO_SETTINGS_DOC)
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def activate_created_portfolio(transaction):
+            settings_doc = settings_ref.get(transaction=transaction)
+            settings = (settings_doc.to_dict() or {}) if settings_doc.exists else {}
+            current_revision = max(0, int(settings.get("activationRevision") or 0))
+            next_revision = current_revision + 1
+            transaction.set(settings_ref, {
+                "activePortfolioId": doc_ref.id,
+                "activationRevision": next_revision,
+            }, merge=True)
+            return next_revision
+
+        activation_revision = activate_created_portfolio(transaction)
         response_payload = {
             **payload,
             "createdAt": now,

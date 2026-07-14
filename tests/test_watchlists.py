@@ -310,6 +310,41 @@ class BackendTestCase(unittest.TestCase):
             {"p1": 3, "p2": 7},
         )
 
+    def test_portfolio_create_advances_activation_revision_transactionally(self):
+        self.seed_portfolio("p1", "One", 0)
+        self.seed_portfolio_settings("p1", 4)
+
+        first = self.client.post(
+            "/portfolios",
+            headers=self.headers,
+            json={
+                "portfolioId": "p2",
+                "idempotencyKey": "create-op-p2",
+                "name": "Two",
+            },
+        )
+        second = self.client.post(
+            "/portfolios",
+            headers=self.headers,
+            json={
+                "portfolioId": "p3",
+                "idempotencyKey": "create-op-p3",
+                "name": "Three",
+            },
+        )
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(first.get_json()["activationRevision"], 5)
+        self.assertEqual(second.get_json()["activationRevision"], 6)
+        settings_path = (
+            "users", "user-a", "portfolio", backend.PORTFOLIO_SETTINGS_DOC
+        )
+        self.assertEqual(
+            self.database.documents[settings_path]["activationRevision"],
+            6,
+        )
+
     def test_rename_requires_current_revision_and_advances_it(self):
         self.seed_portfolio("p1", "One", 3)
         self.seed_portfolio("p2", "Two", 0)
