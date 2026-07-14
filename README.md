@@ -248,9 +248,9 @@ response with `error.code`, `error.field`, and `error.detail`.
 | --- | --- | --- | --- |
 | GET | /portfolios | 60/minute | Lists the user's named portfolios and active portfolio ID |
 | POST | /portfolios | 30/minute | Creates and activates an empty named USD portfolio |
-| PATCH | /portfolios/<id> | 60/minute | Renames an owned portfolio |
-| DELETE | /portfolios/<id> | 30/minute | Deletes a portfolio when at least one other portfolio remains |
-| POST | /portfolios/<id>/activate | 60/minute | Persists the active portfolio selection |
+| PATCH | /portfolios/<id> | 60/minute | Renames using the required `baseRevision` precondition |
+| DELETE | /portfolios/<id> | 30/minute | Deletes using the required `baseRevision` precondition |
+| POST | /portfolios/<id>/activate | 60/minute | Activates using the required `baseActivationRevision` precondition |
 | POST | /portfolio/save | 60/minute | Validates and saves the requested portfolioId |
 | GET | /portfolio/load?portfolioId=<id> | 60/minute | Loads the requested or active portfolio with trusted ticker metadata |
 | POST | /portfolio/current-prices | 30/minute | Returns yfinance prices for a list of tickers |
@@ -258,7 +258,13 @@ response with `error.code`, `error.field`, and `error.detail`.
 
 Portfolio quotes are fetched from Yahoo in one non-threaded batch and cached per symbol for five minutes. When REDIS_URL is configured, cache entries are shared across service workers; otherwise bounded process memory is used. A last successful quote may be returned with a stale cache status for up to one hour when Yahoo is unavailable or rate-limits the refresh. Failed lookups without a prior quote are cached for 15 seconds.
 
-The existing users/{uid}/portfolio/default document remains the legacy portfolio and is displayed as “Core portfolio” when it has no stored name. Portfolio names are whitespace-normalized and case-insensitively unique per user; users may keep up to 20 portfolios. The reserved _settings document stores activePortfolioId and is never returned as a portfolio.
+The existing users/{uid}/portfolio/default document remains the legacy portfolio and is displayed as “Core portfolio” when it has no stored name. Portfolio names are whitespace-normalized and case-insensitively unique per user; users may keep up to 20 portfolios. The reserved _settings document stores activePortfolioId and activationRevision and is never returned as a portfolio.
+
+Portfolio summaries expose `revision`. Rename and delete JSON bodies must carry
+that value as `baseRevision`; a stale value returns `409 REVISION_CONFLICT`
+with the canonical portfolio. List/bootstrap responses also expose
+`activationRevision`. Activation bodies must carry it as
+`baseActivationRevision`; stale activation returns `409 ACTIVATION_CONFLICT`
 
 ### Dip Finder watchlists
 
