@@ -893,6 +893,13 @@ def _list_portfolio_docs(uid):
     ]
 
 
+def _list_portfolio_docs_in_transaction(uid, transaction):
+    return [
+        doc for doc in _portfolios_ref(uid).stream(transaction=transaction)
+        if doc.id != PORTFOLIO_SETTINGS_DOC
+    ]
+
+
 def _portfolio_name(doc_id, payload):
     fallback = "Core portfolio" if doc_id == "default" else "Untitled portfolio"
     return str(payload.get("name") or fallback)
@@ -1856,57 +1863,87 @@ def create_portfolio(current_user_uid):
         return jsonify({"message": name_error}), 400
     portfolio_id = str(data.get("portfolioId") or "").strip()
     idempotency_key = _idempotency_key(data.get("idempotencyKey"))
-    if portfolio_id and not _valid_portfolio_id(portfolio_id):
-        return jsonify({"message": "Invalid client portfolio ID."}), 400
-    if data.get("idempotencyKey") is not None and not idempotency_key:
-        return jsonify({"message": "Invalid idempotency key."}), 400
+    if not _valid_portfolio_id(portfolio_id):
+        return jsonify({"message": "A valid client portfolioId is required."}), 400
+    if not idempotency_key:
+        return jsonify({"message": "A valid idempotencyKey is required."}), 400
+
+    portfolios_ref = _portfolios_ref(current_user_uid)
+    doc_ref = portfolios_ref.document(portfolio_id)
+    settings_ref = portfolios_ref.document(PORTFOLIO_SETTINGS_DOC)
+    payload = {
+        "name": name,
+        "positions": [],
+        "positionCount": 0,
+        "baseCurrency": "USD",
+        "revision": 0,
+        "createOperationId": idempotency_key,
+        "createdAt": firestore.SERVER_TIMESTAMP,
+        "updatedAt": firestore.SERVER_TIMESTAMP,
+    }
+
     try:
-        docs = _list_portfolio_docs(current_user_uid)
-        doc_ref = _portfolios_ref(current_user_uid).document(portfolio_id) if portfolio_id else None
-        if doc_ref:
-            existing_doc = doc_ref.get()
-            if existing_doc.exists:
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def create_in_transaction(transaction):
+            settings_snapshot = settings_ref.get(transaction=transaction)
+            docs = _list_portfolio_docs_in_transaction(
+                current_user_uid, transaction
+            )
+            existing_doc = next(
+                (doc for doc in docs if doc.id == portfolio_id), None
+            )
+            settings = (
+                settings_snapshot.to_dict() or {}
+                if settings_snapshot.exists
+                else {}
+            )
+
+            if existing_doc is not None:
                 existing = existing_doc.to_dict() or {}
-                if idempotency_key and existing.get("createOperationId") == idempotency_key:
-                    return jsonify({
-                        "portfolio": _serialize_portfolio_summary(existing_doc),
-                        "canonicalPortfolio": _serialize_portfolio_detail(existing_doc),
-                        "activePortfolioId": _active_portfolio_id(current_user_uid, docs),
-                        "idempotentReplay": True,
-                    }), 200
-                return jsonify({"message": "A portfolio with that ID already exists."}), 409
-        if len(docs) >= MAX_PORTFOLIOS:
+                if existing.get("createOperationId") == idempotency_key:
+                    active_id = settings.get("activePortfolioId")
+                    valid_ids = {doc.id for doc in docs}
+                    if active_id not in valid_ids:
+                        active_id = existing_doc.id
+                    return "replay", active_id
+                return "id_conflict", None
+            if len(docs) >= MAX_PORTFOLIOS:
+                return "limit", None
+            if _portfolio_name_conflict(docs, name):
+                return "name_conflict", None
+
+            transaction.set(doc_ref, payload)
+            transaction.set(
+                settings_ref,
+                {"activePortfolioId": portfolio_id},
+                merge=True,
+            )
+            return "created", portfolio_id
+
+        status, active_id = create_in_transaction(transaction)
+        if status == "id_conflict":
+            return jsonify({"message": "A portfolio with that ID already exists."}), 409
+        if status == "limit":
             return jsonify({
                 "message": f"A maximum of {MAX_PORTFOLIOS} portfolios is allowed."
             }), 400
-        if _portfolio_name_conflict(docs, name):
+        if status == "name_conflict":
             return jsonify({"message": "A portfolio with this name already exists."}), 409
-        now = _utc_now()
-        payload = {
-            "name": name,
-            "positions": [],
-            "positionCount": 0,
-            "baseCurrency": "USD",
-            "revision": 0,
-            "createOperationId": idempotency_key,
-            "createdAt": firestore.SERVER_TIMESTAMP,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
+
+        canonical_doc = doc_ref.get()
+        if not canonical_doc.exists:
+            raise RuntimeError("Created portfolio was not readable after commit.")
+        response = {
+            "portfolio": _serialize_portfolio_summary(canonical_doc),
+            "canonicalPortfolio": _serialize_portfolio_detail(canonical_doc),
+            "activePortfolioId": active_id,
         }
-        doc_ref = doc_ref or _portfolios_ref(current_user_uid).document()
-        doc_ref.set(payload)
-        _portfolios_ref(current_user_uid).document(PORTFOLIO_SETTINGS_DOC).set({
-            "activePortfolioId": doc_ref.id
-        }, merge=True)
-        response_payload = {
-            **payload,
-            "createdAt": now,
-            "updatedAt": now,
-        }
-        return jsonify({
-            "portfolio": _serialize_portfolio_summary(doc_ref.id, response_payload),
-            "canonicalPortfolio": _serialize_portfolio_detail(doc_ref.id, response_payload),
-            "activePortfolioId": doc_ref.id,
-        }), 201
+        if status == "replay":
+            response["idempotentReplay"] = True
+            return jsonify(response), 200
+        return jsonify(response), 201
     except Exception as exc:
         return _firestore_error_response("create portfolio", exc)
 
@@ -1954,22 +1991,56 @@ def delete_portfolio(current_user_uid, portfolio_id):
         return jsonify({"message": "Portfolio storage is unavailable."}), 503
     if not _valid_portfolio_id(portfolio_id):
         return jsonify({"message": "Invalid portfolio ID."}), 400
+
+    portfolios_ref = _portfolios_ref(current_user_uid)
+    doc_ref = portfolios_ref.document(portfolio_id)
+    settings_ref = portfolios_ref.document(PORTFOLIO_SETTINGS_DOC)
     try:
-        docs = _list_portfolio_docs(current_user_uid)
-        current_doc = next((doc for doc in docs if doc.id == portfolio_id), None)
-        if current_doc is None:
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def delete_in_transaction(transaction):
+            settings_snapshot = settings_ref.get(transaction=transaction)
+            docs = _list_portfolio_docs_in_transaction(
+                current_user_uid, transaction
+            )
+            current_doc = next(
+                (doc for doc in docs if doc.id == portfolio_id), None
+            )
+            if current_doc is None:
+                return "not_found", None
+            if len(docs) <= 1:
+                return "last_portfolio", None
+
+            ids = {doc.id for doc in docs}
+            settings = (
+                settings_snapshot.to_dict() or {}
+                if settings_snapshot.exists
+                else {}
+            )
+            active_id = settings.get("activePortfolioId")
+            if active_id not in ids:
+                active_id = "default" if "default" in ids else docs[0].id
+
+            remaining = [doc for doc in docs if doc.id != portfolio_id]
+            next_active_id = active_id if active_id != portfolio_id else (
+                "default"
+                if any(doc.id == "default" for doc in remaining)
+                else remaining[0].id
+            )
+            transaction.delete(doc_ref)
+            transaction.set(
+                settings_ref,
+                {"activePortfolioId": next_active_id},
+                merge=True,
+            )
+            return "deleted", next_active_id
+
+        status, next_active_id = delete_in_transaction(transaction)
+        if status == "not_found":
             return jsonify({"message": "Portfolio not found."}), 404
-        if len(docs) <= 1:
+        if status == "last_portfolio":
             return jsonify({"message": "At least one portfolio must remain."}), 409
-        active_id = _active_portfolio_id(current_user_uid, docs)
-        remaining = [doc for doc in docs if doc.id != portfolio_id]
-        next_active_id = active_id if active_id != portfolio_id else (
-            "default" if any(doc.id == "default" for doc in remaining) else remaining[0].id
-        )
-        current_doc.reference.delete()
-        _portfolios_ref(current_user_uid).document(PORTFOLIO_SETTINGS_DOC).set({
-            "activePortfolioId": next_active_id
-        }, merge=True)
         return jsonify({"activePortfolioId": next_active_id}), 200
     except Exception as exc:
         return _firestore_error_response("delete portfolio", exc)
