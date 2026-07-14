@@ -1809,11 +1809,40 @@ def delete_watchlist(current_user_uid, watchlist_id):
     if not _valid_watchlist_id(watchlist_id):
         return jsonify({"message": "Invalid watchlist ID."}), 400
 
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required."}), 400
+    base_revision = data.get("baseRevision")
+    if type(base_revision) is not int or base_revision < 0:
+        return jsonify({
+            "message": "baseRevision must be a non-negative integer."
+        }), 400
+
     try:
         doc_ref = _watchlists_ref(current_user_uid).document(watchlist_id)
-        if not doc_ref.get().exists:
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def delete_in_transaction(transaction):
+            snapshot = doc_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                return "missing", None
+            current = snapshot.to_dict() or {}
+            current_revision = max(0, int(current.get("revision") or 0))
+            if current_revision != base_revision:
+                return "conflict", current
+            transaction.delete(doc_ref)
+            return "deleted", None
+
+        outcome, current = delete_in_transaction(transaction)
+        if outcome == "missing":
             return jsonify({"message": "Watchlist not found."}), 404
-        doc_ref.delete()
+        if outcome == "conflict":
+            return jsonify({
+                "message": "Watchlist changed on another device. Reload before deleting.",
+                "code": "REVISION_CONFLICT",
+                "watchlist": _serialize_watchlist(watchlist_id, current),
+            }), 409
         return "", 204
     except Exception as exc:
         return _firestore_error_response("delete watchlist", exc)

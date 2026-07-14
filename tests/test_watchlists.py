@@ -110,6 +110,9 @@ class FakeTransaction:
     def update(self, reference, payload):
         reference.update(payload)
 
+    def delete(self, reference):
+        reference.delete()
+
 
 class FakeDatabase:
     def __init__(self):
@@ -205,7 +208,9 @@ class BackendTestCase(unittest.TestCase):
         self.assertEqual(renamed.get_json()["revision"], 1)
         self.assertEqual(
             self.client.delete(
-                f"/watchlists/{payload['id']}", headers=self.headers
+                f"/watchlists/{payload['id']}",
+                headers=self.headers,
+                json={"baseRevision": renamed.get_json()["revision"]},
             ).status_code,
             204,
         )
@@ -259,6 +264,53 @@ class BackendTestCase(unittest.TestCase):
             json={"name": "No precondition"},
         )
         self.assertEqual(missing_precondition.status_code, 400)
+
+    def test_delete_requires_current_revision(self):
+        created = self.client.post(
+            "/watchlists",
+            headers=self.headers,
+            json={"name": "Delete safely", "tickers": ["AAPL"]},
+        ).get_json()
+        updated = self.client.patch(
+            f"/watchlists/{created['id']}",
+            headers=self.headers,
+            json={
+                "tickers": ["AAPL", "MSFT"],
+                "baseRevision": created["revision"],
+            },
+        ).get_json()
+
+        missing_precondition = self.client.delete(
+            f"/watchlists/{created['id']}",
+            headers=self.headers,
+        )
+        self.assertEqual(missing_precondition.status_code, 400)
+
+        stale = self.client.delete(
+            f"/watchlists/{created['id']}",
+            headers=self.headers,
+            json={"baseRevision": created["revision"]},
+        )
+        self.assertEqual(stale.status_code, 409)
+        conflict = stale.get_json()
+        self.assertEqual(conflict["code"], "REVISION_CONFLICT")
+        self.assertEqual(conflict["watchlist"]["revision"], updated["revision"])
+        self.assertEqual(conflict["watchlist"]["tickers"], ["AAPL", "MSFT"])
+
+        deleted = self.client.delete(
+            f"/watchlists/{created['id']}",
+            headers=self.headers,
+            json={"baseRevision": updated["revision"]},
+        )
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(
+            self.client.delete(
+                f"/watchlists/{created['id']}",
+                headers=self.headers,
+                json={"baseRevision": updated["revision"]},
+            ).status_code,
+            404,
+        )
 
     def test_transactional_merge_preserves_order_and_skips_duplicates(self):
         created = self.client.post(
