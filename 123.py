@@ -586,6 +586,7 @@ def _serialize_watchlist(doc_or_id, payload=None):
         "id": watchlist_id,
         "name": str(payload.get("name", "")),
         "tickers": tickers if isinstance(tickers, list) else [],
+        "revision": max(0, int(payload.get("revision") or 0)),
         "createdAt": _iso_timestamp(payload.get("createdAt")),
         "updatedAt": _iso_timestamp(payload.get("updatedAt")),
     }
@@ -1612,6 +1613,7 @@ def create_watchlist(current_user_uid):
         payload = {
             "name": name,
             "tickers": tickers,
+            "revision": 0,
             "createdAt": firestore.SERVER_TIMESTAMP,
             "updatedAt": firestore.SERVER_TIMESTAMP,
         }
@@ -1639,45 +1641,88 @@ def update_watchlist(current_user_uid, watchlist_id):
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or not ({"name", "tickers"} & set(data)):
         return jsonify({"message": "Provide a name or tickers to update."}), 400
+    base_revision = data.get("baseRevision")
+    if (
+        "baseRevision" not in data
+        or isinstance(base_revision, bool)
+        or not isinstance(base_revision, int)
+        or base_revision < 0
+    ):
+        return jsonify({
+            "message": "baseRevision must be a non-negative integer."
+        }), 400
 
+    name = None
+    if "name" in data:
+        name, name_error = _normalize_watchlist_name(data.get("name"))
+        if name_error:
+            return jsonify({"message": name_error}), 400
+
+    tickers = None
+    if "tickers" in data:
+        tickers, ticker_error = _sanitize_watchlist_tickers(data.get("tickers"))
+        if ticker_error:
+            return jsonify({"message": ticker_error}), 400
+
+    doc_ref = _watchlists_ref(current_user_uid).document(watchlist_id)
     try:
-        current_doc = _watchlists_ref(current_user_uid).document(watchlist_id).get()
-        if not current_doc.exists:
+        if name is not None and _find_name_conflict(
+            _list_watchlist_docs(current_user_uid), name, ignored_id=watchlist_id
+        ):
+            return jsonify({
+                "message": "A watchlist with this name already exists."
+            }), 409
+
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def update_in_transaction(transaction):
+            snapshot = doc_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                return None
+            current = snapshot.to_dict() or {}
+            current_revision = max(0, int(current.get("revision") or 0))
+            if current_revision != base_revision:
+                raise ValueError("REVISION_CONFLICT")
+
+            next_revision = current_revision + 1
+            updates = {
+                "revision": next_revision,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            }
+            if name is not None:
+                updates["name"] = name
+            if tickers is not None:
+                updates["tickers"] = tickers
+            transaction.update(doc_ref, updates)
+            return current, next_revision
+
+        result = update_in_transaction(transaction)
+        if result is None:
             return jsonify({"message": "Watchlist not found."}), 404
 
-        current = current_doc.to_dict() or {}
-        name = current.get("name", "")
-        tickers = current.get("tickers", [])
-
-        if "name" in data:
-            name, name_error = _normalize_watchlist_name(data.get("name"))
-            if name_error:
-                return jsonify({"message": name_error}), 400
-            same_name = list(_watchlists_ref(current_user_uid)
-                .where("name", "==", name).limit(1).stream())
-            if same_name and same_name[0].id != watchlist_id:
-                return jsonify({
-                    "message": "A watchlist with this name already exists."
-                }), 409
-
-        if "tickers" in data:
-            tickers, ticker_error = _sanitize_watchlist_tickers(data.get("tickers"))
-            if ticker_error:
-                return jsonify({"message": ticker_error}), 400
-
-        now = _utc_now()
-        current_doc.reference.update({
-            "name": name,
-            "tickers": tickers,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-        })
-        payload = {
+        current, next_revision = result
+        response_payload = {
             **current,
-            "name": name,
-            "tickers": tickers,
-            "updatedAt": now,
+            "revision": next_revision,
+            "updatedAt": _utc_now(),
         }
-        return jsonify(_serialize_watchlist(watchlist_id, payload)), 200
+        if name is not None:
+            response_payload["name"] = name
+        if tickers is not None:
+            response_payload["tickers"] = tickers
+        canonical = _serialize_watchlist(watchlist_id, response_payload)
+        return jsonify(canonical), 200
+    except ValueError as exc:
+        if str(exc) == "REVISION_CONFLICT":
+            current_doc = doc_ref.get()
+            canonical = _serialize_watchlist(current_doc) if current_doc.exists else None
+            return jsonify({
+                "message": "Watchlist changed on another device. Reload before saving.",
+                "code": "REVISION_CONFLICT",
+                "watchlist": canonical,
+            }), 409
+        return jsonify({"message": "Unable to update watchlist."}), 400
     except Exception as exc:
         return _firestore_error_response("update watchlist", exc)
 
@@ -1717,21 +1762,24 @@ def merge_watchlist_tickers(current_user_uid, watchlist_id):
         if len(merged) > MAX_WATCHLIST_TICKERS:
             raise ValueError("WATCHLIST_TICKER_LIMIT")
 
+        next_revision = max(0, int(current.get("revision") or 0)) + 1
         transaction.update(doc_ref, {
             "tickers": merged,
+            "revision": next_revision,
             "updatedAt": firestore.SERVER_TIMESTAMP,
         })
-        return current, merged, added
+        return current, merged, added, next_revision
 
     try:
         result = merge_in_transaction(transaction)
         if result is None:
             return jsonify({"message": "Watchlist not found."}), 404
 
-        current, merged, added = result
+        current, merged, added, next_revision = result
         payload = {
             **current,
             "tickers": merged,
+            "revision": next_revision,
             "updatedAt": _utc_now(),
         }
         return jsonify({
@@ -1761,11 +1809,40 @@ def delete_watchlist(current_user_uid, watchlist_id):
     if not _valid_watchlist_id(watchlist_id):
         return jsonify({"message": "Invalid watchlist ID."}), 400
 
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required."}), 400
+    base_revision = data.get("baseRevision")
+    if type(base_revision) is not int or base_revision < 0:
+        return jsonify({
+            "message": "baseRevision must be a non-negative integer."
+        }), 400
+
     try:
         doc_ref = _watchlists_ref(current_user_uid).document(watchlist_id)
-        if not doc_ref.get().exists:
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def delete_in_transaction(transaction):
+            snapshot = doc_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                return "missing", None
+            current = snapshot.to_dict() or {}
+            current_revision = max(0, int(current.get("revision") or 0))
+            if current_revision != base_revision:
+                return "conflict", current
+            transaction.delete(doc_ref)
+            return "deleted", None
+
+        outcome, current = delete_in_transaction(transaction)
+        if outcome == "missing":
             return jsonify({"message": "Watchlist not found."}), 404
-        doc_ref.delete()
+        if outcome == "conflict":
+            return jsonify({
+                "message": "Watchlist changed on another device. Reload before deleting.",
+                "code": "REVISION_CONFLICT",
+                "watchlist": _serialize_watchlist(watchlist_id, current),
+            }), 409
         return "", 204
     except Exception as exc:
         return _firestore_error_response("delete watchlist", exc)
