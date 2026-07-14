@@ -74,8 +74,11 @@ class FakeDocument:
         payload = self.database.documents.get(self.path)
         return FakeSnapshot(self, payload)
 
-    def set(self, payload):
-        self.database.documents[self.path] = self.database.resolve_timestamps(payload)
+    def set(self, payload, merge=False):
+        resolved = self.database.resolve_timestamps(payload)
+        if merge:
+            resolved = {**self.database.documents.get(self.path, {}), **resolved}
+        self.database.documents[self.path] = resolved
 
     def update(self, payload):
         current = dict(self.database.documents.get(self.path, {}))
@@ -97,7 +100,15 @@ class FakeCollection:
             document_id = f"watchlist_{self.database.counter:04d}"
         return FakeDocument(self.database, self.path + (document_id,))
 
-    def stream(self):
+    def where(self, field, operator, value):
+        if operator != "==":
+            raise NotImplementedError(operator)
+        return FakeQuery([
+            snapshot for snapshot in self.stream()
+            if snapshot.to_dict().get(field) == value
+        ])
+
+    def stream(self, transaction=None):
         depth = len(self.path) + 1
         return [
             FakeSnapshot(FakeDocument(self.database, path), payload)
@@ -115,13 +126,30 @@ class FakeCollection:
         return self
 
 
+class FakeQuery:
+    def __init__(self, snapshots):
+        self.snapshots = snapshots
+        self.limit_count = None
+
+    def limit(self, count):
+        self.limit_count = count
+        return self
+
+    def stream(self):
+        if self.limit_count is None:
+            return list(self.snapshots)
+        return list(self.snapshots[:self.limit_count])
+
+
 class FakeTransaction:
     def update(self, reference, payload):
         reference.update(payload)
 
+    def set(self, reference, payload, merge=False):
+        reference.set(payload, merge=merge)
+
     def delete(self, reference):
         reference.delete()
-
 
 class FakeDatabase:
     def __init__(self):
@@ -471,6 +499,89 @@ class BackendTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["error"]["field"], "path.calc_id")
 
+
+    def test_portfolio_lifecycle_is_idempotent_and_preserves_last_portfolio(self):
+        def create(portfolio_id, name, operation_id):
+            return self.client.post(
+                "/portfolios",
+                headers=self.headers,
+                json={
+                    "portfolioId": portfolio_id,
+                    "idempotencyKey": operation_id,
+                    "name": name,
+                },
+            )
+
+        first = create("portfolio-a", "Core", "create-op-a")
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(first.get_json()["activePortfolioId"], "portfolio-a")
+
+        replay = create("portfolio-a", "Core", "create-op-a")
+        self.assertEqual(replay.status_code, 200)
+        self.assertTrue(replay.get_json()["idempotentReplay"])
+
+        duplicate_name = create("portfolio-b", "core", "create-op-b")
+        self.assertEqual(duplicate_name.status_code, 409)
+        second = create("portfolio-b", "Growth", "create-op-b")
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(second.get_json()["activePortfolioId"], "portfolio-b")
+
+        deleted = self.client.delete(
+            "/portfolios/portfolio-a", headers=self.headers
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.get_json()["activePortfolioId"], "portfolio-b")
+        self.assertEqual(
+            self.client.delete(
+                "/portfolios/portfolio-b", headers=self.headers
+            ).status_code,
+            409,
+        )
+
+        settings_path = ("users", "user-a", "portfolio", "_settings")
+        self.assertEqual(
+            self.database.documents[settings_path]["activePortfolioId"],
+            "portfolio-b",
+        )
+        portfolio_paths = [
+            path for path in self.database.documents
+            if len(path) == 4
+            and path[:3] == ("users", "user-a", "portfolio")
+            and path[-1] != "_settings"
+        ]
+        self.assertEqual(portfolio_paths, [
+            ("users", "user-a", "portfolio", "portfolio-b")
+        ])
+
+    def test_portfolio_create_requires_idempotency_and_enforces_limit(self):
+        missing_contract = self.client.post(
+            "/portfolios",
+            headers=self.headers,
+            json={"name": "Missing identifiers"},
+        )
+        self.assertEqual(missing_contract.status_code, 400)
+
+        with mock.patch.object(backend, "MAX_PORTFOLIOS", 1):
+            first = self.client.post(
+                "/portfolios",
+                headers=self.headers,
+                json={
+                    "portfolioId": "portfolio-a",
+                    "idempotencyKey": "create-op-a",
+                    "name": "One",
+                },
+            )
+            second = self.client.post(
+                "/portfolios",
+                headers=self.headers,
+                json={
+                    "portfolioId": "portfolio-b",
+                    "idempotencyKey": "create-op-b",
+                    "name": "Two",
+                },
+            )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 400)
 
 class PerformanceCalculationTests(unittest.TestCase):
     def test_return_drawdown_and_weekend_anchor(self):
