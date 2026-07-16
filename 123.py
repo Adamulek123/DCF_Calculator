@@ -1084,6 +1084,49 @@ def _get_conversion_rates(base_currency="USD", force_refresh=False):
     return payload
 
 
+FIREBASE_CERTIFICATES_URL = (
+    "https://www.googleapis.com/robot/v1/metadata/x509/"
+    "securetoken@system.gserviceaccount.com"
+)
+FIREBASE_CERTIFICATE_PROBE_COOLDOWN_SECONDS = 60
+_firebase_certificate_probe_lock = Lock()
+_last_firebase_certificate_probe_at = 0.0
+
+
+def _log_firebase_certificate_endpoint_status():
+    """Log a bounded probe when Firebase Admin cannot download signing certs."""
+    global _last_firebase_certificate_probe_at
+
+    now = time.monotonic()
+    with _firebase_certificate_probe_lock:
+        if (
+            now - _last_firebase_certificate_probe_at
+            < FIREBASE_CERTIFICATE_PROBE_COOLDOWN_SECONDS
+        ):
+            return
+        _last_firebase_certificate_probe_at = now
+
+    try:
+        response = requests.get(FIREBASE_CERTIFICATES_URL, timeout=20)
+        payload = {
+            "event": "firebase_certificate_probe",
+            "status": response.status_code,
+            "contentType": response.headers.get("Content-Type"),
+            "contentLength": len(response.content),
+            "retryAfter": response.headers.get("Retry-After"),
+            "cacheControl": response.headers.get("Cache-Control"),
+        }
+        if response.status_code != 200:
+            payload["bodyPreview"] = response.text[:300].replace("\n", " ")
+        print(json.dumps(payload, separators=(",", ":")))
+    except requests.RequestException as exc:
+        print(json.dumps({
+            "event": "firebase_certificate_probe_failed",
+            "errorType": type(exc).__name__,
+            "error": str(exc),
+        }, separators=(",", ":")))
+
+
 def firebase_token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -1112,6 +1155,8 @@ def firebase_token_required(f):
             return jsonify({"message": "Session expired or invalid."}), 401
         except Exception as exc:
             print(f"Firebase token verification failed: {exc}")
+            if "Could not fetch certificates" in str(exc):
+                _log_firebase_certificate_endpoint_status()
             return jsonify({
                 "message": "Authentication service is temporarily unavailable."
             }), 503
