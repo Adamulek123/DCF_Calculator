@@ -256,7 +256,9 @@ response with `error.code`, `error.field`, and `error.detail`.
 | POST | /portfolio/current-prices | 30/minute | Returns yfinance prices for a list of tickers |
 | GET | /portfolio/conversion-rates?base=USD | 30/minute | Returns Frankfurter rates, cached in memory for six hours |
 
-Portfolio quotes are fetched from Yahoo in one non-threaded batch and cached per symbol for five minutes. When REDIS_URL is configured, cache entries are shared across service workers; otherwise bounded process memory is used. A last successful quote may be returned with a stale cache status for up to one hour when Yahoo is unavailable or rate-limits the refresh. Failed lookups without a prior quote are cached for 15 seconds.
+Portfolio quotes are fetched from Yahoo in one non-threaded batch. Successful quotes are fresh for five minutes, stale until 24 hours, and retained as last-known values for seven days. Stale and last-known values are returned only when Yahoo fails or omits the symbol. Failed lookups without a prior successful quote are cached separately for 15 seconds, so a provider failure never overwrites a usable quote.
+
+Set `REDIS_URL` in production to persist the seven-day per-symbol quote cache across service workers and restarts. Without Redis, or while Redis is unavailable, the service remains available using a bounded process-memory cache and logs that degraded state.
 
 The existing users/{uid}/portfolio/default document remains the legacy portfolio and is displayed as “Core portfolio” when it has no stored name. Portfolio names are whitespace-normalized and case-insensitively unique per user; users may keep up to 20 portfolios. The reserved _settings document stores activePortfolioId and activationRevision and is never returned as a portfolio.
 
