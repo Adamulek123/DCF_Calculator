@@ -21,6 +21,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import edgar
 from edgar import *
+from earnings_calendar import register_earnings_calendar_routes
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 256 * 1024
@@ -71,7 +72,8 @@ CORS(
     app,
     resources={r"/*": {"origins": allowed_origins}},
     methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "If-None-Match"],
+    expose_headers=["ETag", "Retry-After"],
     supports_credentials=False,
 )
 
@@ -181,6 +183,8 @@ elif os.environ.get("FIREBASE_AUTH_EMULATOR_HOST"):
         print(f"Error initializing Firebase Admin SDK for the emulator: {e}")
 else:
     print("FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable not found. Firebase features will be limited.")
+
+register_earnings_calendar_routes(app, limiter, lambda: db)
 
 
 _ticker_cache = []

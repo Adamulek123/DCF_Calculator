@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 .ticker-sector-checkpoint.json
 
+# Local development secrets (copy local_secrets.example.json)
+local_secrets.json
+
 # Local agent instructions
 AGENTS.md
 AGENTS.md.orig
