@@ -1,0 +1,6056 @@
+{
+  "metadata": {
+    "version": "2026-07-22",
+    "source": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+    "reviewedAt": "2026-07-22",
+    "rights": "Wikipedia content is available under CC BY-SA 4.0; source and revision attribution retained.",
+    "pageTitle": "List of S&P 500 companies",
+    "pageId": 2676045,
+    "revisionId": 1365256480,
+    "securityCount": 503
+  },
+  "companies": [
+    {
+      "cik": "0001090872",
+      "symbol": "A",
+      "providerSymbols": {
+        "finnhub": "A"
+      },
+      "name": "Agilent Technologies",
+      "sector": "Health Care",
+      "industry": "Life Sciences Tools & Services",
+      "validFrom": "2000-06-05",
+      "validTo": null
+    },
+    {
+      "cik": "0000320193",
+      "symbol": "AAPL",
+      "providerSymbols": {
+        "finnhub": "AAPL"
+      },
+      "name": "Apple Inc.",
+      "sector": "Information Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "validFrom": "1982-11-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001551152",
+      "symbol": "ABBV",
+      "providerSymbols": {
+        "finnhub": "ABBV"
+      },
+      "name": "AbbVie",
+      "sector": "Health Care",
+      "industry": "Biotechnology",
+      "validFrom": "2012-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001559720",
+      "symbol": "ABNB",
+      "providerSymbols": {
+        "finnhub": "ABNB"
+      },
+      "name": "Airbnb",
+      "sector": "Consumer Discretionary",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "validFrom": "2023-09-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000001800",
+      "symbol": "ABT",
+      "providerSymbols": {
+        "finnhub": "ABT"
+      },
+      "name": "Abbott Laboratories",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000947484",
+      "symbol": "ACGL",
+      "providerSymbols": {
+        "finnhub": "ACGL"
+      },
+      "name": "Arch Capital Group",
+      "sector": "Financials",
+      "industry": "Property & Casualty Insurance",
+      "validFrom": "2022-11-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001467373",
+      "symbol": "ACN",
+      "providerSymbols": {
+        "finnhub": "ACN"
+      },
+      "name": "Accenture",
+      "sector": "Information Technology",
+      "industry": "IT Consulting & Other Services",
+      "validFrom": "2011-07-06",
+      "validTo": null
+    },
+    {
+      "cik": "0000796343",
+      "symbol": "ADBE",
+      "providerSymbols": {
+        "finnhub": "ADBE"
+      },
+      "name": "Adobe Inc.",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "1997-05-05",
+      "validTo": null
+    },
+    {
+      "cik": "0000006281",
+      "symbol": "ADI",
+      "providerSymbols": {
+        "finnhub": "ADI"
+      },
+      "name": "Analog Devices",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "1999-10-12",
+      "validTo": null
+    },
+    {
+      "cik": "0000007084",
+      "symbol": "ADM",
+      "providerSymbols": {
+        "finnhub": "ADM"
+      },
+      "name": "Archer Daniels Midland",
+      "sector": "Consumer Staples",
+      "industry": "Agricultural Products & Services",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000008670",
+      "symbol": "ADP",
+      "providerSymbols": {
+        "finnhub": "ADP"
+      },
+      "name": "Automatic Data Processing",
+      "sector": "Industrials",
+      "industry": "Human Resource & Employment Services",
+      "validFrom": "1981-03-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000769397",
+      "symbol": "ADSK",
+      "providerSymbols": {
+        "finnhub": "ADSK"
+      },
+      "name": "Autodesk",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "1989-12-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001002910",
+      "symbol": "AEE",
+      "providerSymbols": {
+        "finnhub": "AEE"
+      },
+      "name": "Ameren",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "1991-09-19",
+      "validTo": null
+    },
+    {
+      "cik": "0000004904",
+      "symbol": "AEP",
+      "providerSymbols": {
+        "finnhub": "AEP"
+      },
+      "name": "American Electric Power",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000874761",
+      "symbol": "AES",
+      "providerSymbols": {
+        "finnhub": "AES"
+      },
+      "name": "AES Corporation",
+      "sector": "Utilities",
+      "industry": "Independent Power Producers & Energy Traders",
+      "validFrom": "1998-10-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000004977",
+      "symbol": "AFL",
+      "providerSymbols": {
+        "finnhub": "AFL"
+      },
+      "name": "Aflac",
+      "sector": "Financials",
+      "industry": "Life & Health Insurance",
+      "validFrom": "1999-05-28",
+      "validTo": null
+    },
+    {
+      "cik": "0000005272",
+      "symbol": "AIG",
+      "providerSymbols": {
+        "finnhub": "AIG"
+      },
+      "name": "American International Group",
+      "sector": "Financials",
+      "industry": "Multi-line Insurance",
+      "validFrom": "1980-03-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001267238",
+      "symbol": "AIZ",
+      "providerSymbols": {
+        "finnhub": "AIZ"
+      },
+      "name": "Assurant",
+      "sector": "Financials",
+      "industry": "Multi-line Insurance",
+      "validFrom": "2007-04-10",
+      "validTo": null
+    },
+    {
+      "cik": "0000354190",
+      "symbol": "AJG",
+      "providerSymbols": {
+        "finnhub": "AJG"
+      },
+      "name": "Arthur J. Gallagher & Co.",
+      "sector": "Financials",
+      "industry": "Insurance Brokers",
+      "validFrom": "2016-05-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001086222",
+      "symbol": "AKAM",
+      "providerSymbols": {
+        "finnhub": "AKAM"
+      },
+      "name": "Akamai Technologies",
+      "sector": "Information Technology",
+      "industry": "Internet Services & Infrastructure",
+      "validFrom": "2007-07-12",
+      "validTo": null
+    },
+    {
+      "cik": "0000915913",
+      "symbol": "ALB",
+      "providerSymbols": {
+        "finnhub": "ALB"
+      },
+      "name": "Albemarle Corporation",
+      "sector": "Materials",
+      "industry": "Specialty Chemicals",
+      "validFrom": "2016-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001097149",
+      "symbol": "ALGN",
+      "providerSymbols": {
+        "finnhub": "ALGN"
+      },
+      "name": "Align Technology",
+      "sector": "Health Care",
+      "industry": "Health Care Supplies",
+      "validFrom": "2017-06-19",
+      "validTo": null
+    },
+    {
+      "cik": "0000899051",
+      "symbol": "ALL",
+      "providerSymbols": {
+        "finnhub": "ALL"
+      },
+      "name": "Allstate",
+      "sector": "Financials",
+      "industry": "Property & Casualty Insurance",
+      "validFrom": "1995-07-13",
+      "validTo": null
+    },
+    {
+      "cik": "0001579241",
+      "symbol": "ALLE",
+      "providerSymbols": {
+        "finnhub": "ALLE"
+      },
+      "name": "Allegion",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "validFrom": "2013-12-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000006951",
+      "symbol": "AMAT",
+      "providerSymbols": {
+        "finnhub": "AMAT"
+      },
+      "name": "Applied Materials",
+      "sector": "Information Technology",
+      "industry": "Semiconductor Materials & Equipment",
+      "validFrom": "1995-03-16",
+      "validTo": null
+    },
+    {
+      "cik": "0001748790",
+      "symbol": "AMCR",
+      "providerSymbols": {
+        "finnhub": "AMCR"
+      },
+      "name": "Amcor",
+      "sector": "Materials",
+      "industry": "Paper & Plastic Packaging Products & Materials",
+      "validFrom": "2019-06-07",
+      "validTo": null
+    },
+    {
+      "cik": "0000002488",
+      "symbol": "AMD",
+      "providerSymbols": {
+        "finnhub": "AMD"
+      },
+      "name": "Advanced Micro Devices",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "2017-03-20",
+      "validTo": null
+    },
+    {
+      "cik": "0001037868",
+      "symbol": "AME",
+      "providerSymbols": {
+        "finnhub": "AME"
+      },
+      "name": "Ametek",
+      "sector": "Industrials",
+      "industry": "Electrical Components & Equipment",
+      "validFrom": "2013-09-23",
+      "validTo": null
+    },
+    {
+      "cik": "0000318154",
+      "symbol": "AMGN",
+      "providerSymbols": {
+        "finnhub": "AMGN"
+      },
+      "name": "Amgen",
+      "sector": "Health Care",
+      "industry": "Biotechnology",
+      "validFrom": "1992-01-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000820027",
+      "symbol": "AMP",
+      "providerSymbols": {
+        "finnhub": "AMP"
+      },
+      "name": "Ameriprise Financial",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "2005-10-03",
+      "validTo": null
+    },
+    {
+      "cik": "0001053507",
+      "symbol": "AMT",
+      "providerSymbols": {
+        "finnhub": "AMT"
+      },
+      "name": "American Tower",
+      "sector": "Real Estate",
+      "industry": "Telecom Tower REITs",
+      "validFrom": "2007-11-19",
+      "validTo": null
+    },
+    {
+      "cik": "0001018724",
+      "symbol": "AMZN",
+      "providerSymbols": {
+        "finnhub": "AMZN"
+      },
+      "name": "Amazon",
+      "sector": "Consumer Discretionary",
+      "industry": "Broadline Retail",
+      "validFrom": "2005-11-18",
+      "validTo": null
+    },
+    {
+      "cik": "0001596532",
+      "symbol": "ANET",
+      "providerSymbols": {
+        "finnhub": "ANET"
+      },
+      "name": "Arista Networks",
+      "sector": "Information Technology",
+      "industry": "Communications Equipment",
+      "validFrom": "2018-08-28",
+      "validTo": null
+    },
+    {
+      "cik": "0000315293",
+      "symbol": "AON",
+      "providerSymbols": {
+        "finnhub": "AON"
+      },
+      "name": "Aon plc",
+      "sector": "Financials",
+      "industry": "Insurance Brokers",
+      "validFrom": "1996-04-23",
+      "validTo": null
+    },
+    {
+      "cik": "0000091142",
+      "symbol": "AOS",
+      "providerSymbols": {
+        "finnhub": "AOS"
+      },
+      "name": "A. O. Smith",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "validFrom": "2017-07-26",
+      "validTo": null
+    },
+    {
+      "cik": "0001841666",
+      "symbol": "APA",
+      "providerSymbols": {
+        "finnhub": "APA"
+      },
+      "name": "APA Corporation",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "validFrom": "1997-07-28",
+      "validTo": null
+    },
+    {
+      "cik": "0000002969",
+      "symbol": "APD",
+      "providerSymbols": {
+        "finnhub": "APD"
+      },
+      "name": "Air Products",
+      "sector": "Materials",
+      "industry": "Industrial Gases",
+      "validFrom": "1985-04-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000820313",
+      "symbol": "APH",
+      "providerSymbols": {
+        "finnhub": "APH"
+      },
+      "name": "Amphenol",
+      "sector": "Information Technology",
+      "industry": "Electronic Components",
+      "validFrom": "2008-09-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001858681",
+      "symbol": "APO",
+      "providerSymbols": {
+        "finnhub": "APO"
+      },
+      "name": "Apollo Global Management",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "2024-12-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001751008",
+      "symbol": "APP",
+      "providerSymbols": {
+        "finnhub": "APP"
+      },
+      "name": "AppLovin",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2025-09-22",
+      "validTo": null
+    },
+    {
+      "cik": "0001521332",
+      "symbol": "APTV",
+      "providerSymbols": {
+        "finnhub": "APTV"
+      },
+      "name": "Aptiv",
+      "sector": "Consumer Discretionary",
+      "industry": "Automotive Parts & Equipment",
+      "validFrom": "2012-12-24",
+      "validTo": null
+    },
+    {
+      "cik": "0001035443",
+      "symbol": "ARE",
+      "providerSymbols": {
+        "finnhub": "ARE"
+      },
+      "name": "Alexandria Real Estate Equities",
+      "sector": "Real Estate",
+      "industry": "Office REITs",
+      "validFrom": "2017-03-20",
+      "validTo": null
+    },
+    {
+      "cik": "0001176948",
+      "symbol": "ARES",
+      "providerSymbols": {
+        "finnhub": "ARES"
+      },
+      "name": "Ares Management",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "2025-12-11",
+      "validTo": null
+    },
+    {
+      "cik": "0000731802",
+      "symbol": "ATO",
+      "providerSymbols": {
+        "finnhub": "ATO"
+      },
+      "name": "Atmos Energy",
+      "sector": "Utilities",
+      "industry": "Gas Utilities",
+      "validFrom": "2019-02-15",
+      "validTo": null
+    },
+    {
+      "cik": "0000915912",
+      "symbol": "AVB",
+      "providerSymbols": {
+        "finnhub": "AVB"
+      },
+      "name": "AvalonBay Communities",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "validFrom": "2007-01-10",
+      "validTo": null
+    },
+    {
+      "cik": "0001730168",
+      "symbol": "AVGO",
+      "providerSymbols": {
+        "finnhub": "AVGO"
+      },
+      "name": "Broadcom",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "2014-05-08",
+      "validTo": null
+    },
+    {
+      "cik": "0000008818",
+      "symbol": "AVY",
+      "providerSymbols": {
+        "finnhub": "AVY"
+      },
+      "name": "Avery Dennison",
+      "sector": "Materials",
+      "industry": "Paper & Plastic Packaging Products & Materials",
+      "validFrom": "1987-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001410636",
+      "symbol": "AWK",
+      "providerSymbols": {
+        "finnhub": "AWK"
+      },
+      "name": "American Water Works",
+      "sector": "Utilities",
+      "industry": "Water Utilities",
+      "validFrom": "2016-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001069183",
+      "symbol": "AXON",
+      "providerSymbols": {
+        "finnhub": "AXON"
+      },
+      "name": "Axon Enterprise",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "2023-05-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000004962",
+      "symbol": "AXP",
+      "providerSymbols": {
+        "finnhub": "AXP"
+      },
+      "name": "American Express",
+      "sector": "Financials",
+      "industry": "Consumer Finance",
+      "validFrom": "1976-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000866787",
+      "symbol": "AZO",
+      "providerSymbols": {
+        "finnhub": "AZO"
+      },
+      "name": "AutoZone",
+      "sector": "Consumer Discretionary",
+      "industry": "Automotive Retail",
+      "validFrom": "1997-01-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000012927",
+      "symbol": "BA",
+      "providerSymbols": {
+        "finnhub": "BA"
+      },
+      "name": "Boeing",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000070858",
+      "symbol": "BAC",
+      "providerSymbols": {
+        "finnhub": "BAC"
+      },
+      "name": "Bank of America",
+      "sector": "Financials",
+      "industry": "Diversified Banks",
+      "validFrom": "1976-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000009389",
+      "symbol": "BALL",
+      "providerSymbols": {
+        "finnhub": "BALL"
+      },
+      "name": "Ball Corporation",
+      "sector": "Materials",
+      "industry": "Metal, Glass & Plastic Containers",
+      "validFrom": "1984-10-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000010456",
+      "symbol": "BAX",
+      "providerSymbols": {
+        "finnhub": "BAX"
+      },
+      "name": "Baxter International",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "1972-09-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000764478",
+      "symbol": "BBY",
+      "providerSymbols": {
+        "finnhub": "BBY"
+      },
+      "name": "Best Buy",
+      "sector": "Consumer Discretionary",
+      "industry": "Computer & Electronics Retail",
+      "validFrom": "1999-06-29",
+      "validTo": null
+    },
+    {
+      "cik": "0000010795",
+      "symbol": "BDX",
+      "providerSymbols": {
+        "finnhub": "BDX"
+      },
+      "name": "Becton Dickinson",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "1972-09-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000038777",
+      "symbol": "BEN",
+      "providerSymbols": {
+        "finnhub": "BEN"
+      },
+      "name": "Franklin Resources",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "1998-04-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000014693",
+      "symbol": "BF.B",
+      "providerSymbols": {
+        "finnhub": [
+          "BF.B",
+          "BF-B"
+        ]
+      },
+      "name": "Brown–Forman",
+      "sector": "Consumer Staples",
+      "industry": "Distillers & Vintners",
+      "validFrom": "1982-10-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001996862",
+      "symbol": "BG",
+      "providerSymbols": {
+        "finnhub": "BG"
+      },
+      "name": "Bunge Global",
+      "sector": "Consumer Staples",
+      "industry": "Agricultural Products & Services",
+      "validFrom": "2023-03-15",
+      "validTo": null
+    },
+    {
+      "cik": "0000875045",
+      "symbol": "BIIB",
+      "providerSymbols": {
+        "finnhub": "BIIB"
+      },
+      "name": "Biogen",
+      "sector": "Health Care",
+      "industry": "Biotechnology",
+      "validFrom": "2003-11-13",
+      "validTo": null
+    },
+    {
+      "cik": "0001075531",
+      "symbol": "BKNG",
+      "providerSymbols": {
+        "finnhub": "BKNG"
+      },
+      "name": "Booking Holdings",
+      "sector": "Consumer Discretionary",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "validFrom": "2009-11-06",
+      "validTo": null
+    },
+    {
+      "cik": "0001701605",
+      "symbol": "BKR",
+      "providerSymbols": {
+        "finnhub": "BKR"
+      },
+      "name": "Baker Hughes",
+      "sector": "Energy",
+      "industry": "Oil & Gas Equipment & Services",
+      "validFrom": "2017-07-07",
+      "validTo": null
+    },
+    {
+      "cik": "0001316835",
+      "symbol": "BLDR",
+      "providerSymbols": {
+        "finnhub": "BLDR"
+      },
+      "name": "Builders FirstSource",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "validFrom": "2023-12-18",
+      "validTo": null
+    },
+    {
+      "cik": "0002012383",
+      "symbol": "BLK",
+      "providerSymbols": {
+        "finnhub": "BLK"
+      },
+      "name": "BlackRock",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "2011-04-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000014272",
+      "symbol": "BMY",
+      "providerSymbols": {
+        "finnhub": "BMY"
+      },
+      "name": "Bristol Myers Squibb",
+      "sector": "Health Care",
+      "industry": "Pharmaceuticals",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001390777",
+      "symbol": "BNY",
+      "providerSymbols": {
+        "finnhub": "BNY"
+      },
+      "name": "BNY Mellon",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "1995-03-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001383312",
+      "symbol": "BR",
+      "providerSymbols": {
+        "finnhub": "BR"
+      },
+      "name": "Broadridge Financial Solutions",
+      "sector": "Industrials",
+      "industry": "Data Processing & Outsourced Services",
+      "validFrom": "2018-06-18",
+      "validTo": null
+    },
+    {
+      "cik": "0001067983",
+      "symbol": "BRK.B",
+      "providerSymbols": {
+        "finnhub": [
+          "BRK.B",
+          "BRK-B"
+        ]
+      },
+      "name": "Berkshire Hathaway",
+      "sector": "Financials",
+      "industry": "Multi-Sector Holdings",
+      "validFrom": "2010-02-16",
+      "validTo": null
+    },
+    {
+      "cik": "0000079282",
+      "symbol": "BRO",
+      "providerSymbols": {
+        "finnhub": "BRO"
+      },
+      "name": "Brown & Brown",
+      "sector": "Financials",
+      "industry": "Insurance Brokers",
+      "validFrom": "2021-09-20",
+      "validTo": null
+    },
+    {
+      "cik": "0000885725",
+      "symbol": "BSX",
+      "providerSymbols": {
+        "finnhub": "BSX"
+      },
+      "name": "Boston Scientific",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "1995-02-24",
+      "validTo": null
+    },
+    {
+      "cik": "0001393818",
+      "symbol": "BX",
+      "providerSymbols": {
+        "finnhub": "BX"
+      },
+      "name": "Blackstone Inc.",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "2023-09-18",
+      "validTo": null
+    },
+    {
+      "cik": "0001037540",
+      "symbol": "BXP",
+      "providerSymbols": {
+        "finnhub": "BXP"
+      },
+      "name": "BXP, Inc.",
+      "sector": "Real Estate",
+      "industry": "Office REITs",
+      "validFrom": "2006-04-03",
+      "validTo": null
+    },
+    {
+      "cik": "0000831001",
+      "symbol": "C",
+      "providerSymbols": {
+        "finnhub": "C"
+      },
+      "name": "Citigroup",
+      "sector": "Financials",
+      "industry": "Diversified Banks",
+      "validFrom": "1988-05-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000721371",
+      "symbol": "CAH",
+      "providerSymbols": {
+        "finnhub": "CAH"
+      },
+      "name": "Cardinal Health",
+      "sector": "Health Care",
+      "industry": "Health Care Distributors",
+      "validFrom": "1997-05-27",
+      "validTo": null
+    },
+    {
+      "cik": "0001783180",
+      "symbol": "CARR",
+      "providerSymbols": {
+        "finnhub": "CARR"
+      },
+      "name": "Carrier Global",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "validFrom": "2020-04-03",
+      "validTo": null
+    },
+    {
+      "cik": "0000726958",
+      "symbol": "CASY",
+      "providerSymbols": {
+        "finnhub": "CASY"
+      },
+      "name": "Casey's",
+      "sector": "Consumer Staples",
+      "industry": "Food Retail",
+      "validFrom": "2026-04-09",
+      "validTo": null
+    },
+    {
+      "cik": "0000018230",
+      "symbol": "CAT",
+      "providerSymbols": {
+        "finnhub": "CAT"
+      },
+      "name": "Caterpillar Inc.",
+      "sector": "Industrials",
+      "industry": "Construction Machinery & Heavy Transportation Equipment",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000896159",
+      "symbol": "CB",
+      "providerSymbols": {
+        "finnhub": "CB"
+      },
+      "name": "Chubb Limited",
+      "sector": "Financials",
+      "industry": "Property & Casualty Insurance",
+      "validFrom": "2010-07-15",
+      "validTo": null
+    },
+    {
+      "cik": "0001374310",
+      "symbol": "CBOE",
+      "providerSymbols": {
+        "finnhub": "CBOE"
+      },
+      "name": "Cboe Global Markets",
+      "sector": "Financials",
+      "industry": "Financial Exchanges & Data",
+      "validFrom": "2017-03-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001138118",
+      "symbol": "CBRE",
+      "providerSymbols": {
+        "finnhub": "CBRE"
+      },
+      "name": "CBRE Group",
+      "sector": "Real Estate",
+      "industry": "Real Estate Services",
+      "validFrom": "2006-11-10",
+      "validTo": null
+    },
+    {
+      "cik": "0001051470",
+      "symbol": "CCI",
+      "providerSymbols": {
+        "finnhub": "CCI"
+      },
+      "name": "Crown Castle",
+      "sector": "Real Estate",
+      "industry": "Telecom Tower REITs",
+      "validFrom": "2012-03-14",
+      "validTo": null
+    },
+    {
+      "cik": "0000815097",
+      "symbol": "CCL",
+      "providerSymbols": {
+        "finnhub": "CCL"
+      },
+      "name": "Carnival Corporation",
+      "sector": "Consumer Discretionary",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "validFrom": "1998-12-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000813672",
+      "symbol": "CDNS",
+      "providerSymbols": {
+        "finnhub": "CDNS"
+      },
+      "name": "Cadence Design Systems",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2017-09-18",
+      "validTo": null
+    },
+    {
+      "cik": "0001402057",
+      "symbol": "CDW",
+      "providerSymbols": {
+        "finnhub": "CDW"
+      },
+      "name": "CDW Corporation",
+      "sector": "Information Technology",
+      "industry": "Technology Distributors",
+      "validFrom": "2019-09-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001868275",
+      "symbol": "CEG",
+      "providerSymbols": {
+        "finnhub": "CEG"
+      },
+      "name": "Constellation Energy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "2022-02-02",
+      "validTo": null
+    },
+    {
+      "cik": "0001324404",
+      "symbol": "CF",
+      "providerSymbols": {
+        "finnhub": "CF"
+      },
+      "name": "CF Industries",
+      "sector": "Materials",
+      "industry": "Fertilizers & Agricultural Chemicals",
+      "validFrom": "2008-08-27",
+      "validTo": null
+    },
+    {
+      "cik": "0000759944",
+      "symbol": "CFG",
+      "providerSymbols": {
+        "finnhub": "CFG"
+      },
+      "name": "Citizens Financial Group",
+      "sector": "Financials",
+      "industry": "Regional Banks",
+      "validFrom": "2016-01-29",
+      "validTo": null
+    },
+    {
+      "cik": "0000313927",
+      "symbol": "CHD",
+      "providerSymbols": {
+        "finnhub": "CHD"
+      },
+      "name": "Church & Dwight",
+      "sector": "Consumer Staples",
+      "industry": "Household Products",
+      "validFrom": "2015-12-29",
+      "validTo": null
+    },
+    {
+      "cik": "0001043277",
+      "symbol": "CHRW",
+      "providerSymbols": {
+        "finnhub": "CHRW"
+      },
+      "name": "C.H. Robinson",
+      "sector": "Industrials",
+      "industry": "Air Freight & Logistics",
+      "validFrom": "2007-03-02",
+      "validTo": null
+    },
+    {
+      "cik": "0001091667",
+      "symbol": "CHTR",
+      "providerSymbols": {
+        "finnhub": "CHTR"
+      },
+      "name": "Charter Communications",
+      "sector": "Communication Services",
+      "industry": "Cable & Satellite",
+      "validFrom": "2016-09-08",
+      "validTo": null
+    },
+    {
+      "cik": "0001739940",
+      "symbol": "CI",
+      "providerSymbols": {
+        "finnhub": "CI"
+      },
+      "name": "Cigna",
+      "sector": "Health Care",
+      "industry": "Health Care Services",
+      "validFrom": "1976-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000936395",
+      "symbol": "CIEN",
+      "providerSymbols": {
+        "finnhub": "CIEN"
+      },
+      "name": "Ciena",
+      "sector": "Information Technology",
+      "industry": "Communications Equipment",
+      "validFrom": "2026-02-09",
+      "validTo": null
+    },
+    {
+      "cik": "0000020286",
+      "symbol": "CINF",
+      "providerSymbols": {
+        "finnhub": "CINF"
+      },
+      "name": "Cincinnati Financial",
+      "sector": "Financials",
+      "industry": "Property & Casualty Insurance",
+      "validFrom": "1997-12-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000021665",
+      "symbol": "CL",
+      "providerSymbols": {
+        "finnhub": "CL"
+      },
+      "name": "Colgate-Palmolive",
+      "sector": "Consumer Staples",
+      "industry": "Household Products",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000021076",
+      "symbol": "CLX",
+      "providerSymbols": {
+        "finnhub": "CLX"
+      },
+      "name": "Clorox",
+      "sector": "Consumer Staples",
+      "industry": "Household Products",
+      "validFrom": "1969-03-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001166691",
+      "symbol": "CMCSA",
+      "providerSymbols": {
+        "finnhub": "CMCSA"
+      },
+      "name": "Comcast",
+      "sector": "Communication Services",
+      "industry": "Cable & Satellite",
+      "validFrom": "2002-11-19",
+      "validTo": null
+    },
+    {
+      "cik": "0001156375",
+      "symbol": "CME",
+      "providerSymbols": {
+        "finnhub": "CME"
+      },
+      "name": "CME Group",
+      "sector": "Financials",
+      "industry": "Financial Exchanges & Data",
+      "validFrom": "2006-08-11",
+      "validTo": null
+    },
+    {
+      "cik": "0001058090",
+      "symbol": "CMG",
+      "providerSymbols": {
+        "finnhub": "CMG"
+      },
+      "name": "Chipotle Mexican Grill",
+      "sector": "Consumer Discretionary",
+      "industry": "Restaurants",
+      "validFrom": "2011-04-28",
+      "validTo": null
+    },
+    {
+      "cik": "0000026172",
+      "symbol": "CMI",
+      "providerSymbols": {
+        "finnhub": "CMI"
+      },
+      "name": "Cummins",
+      "sector": "Industrials",
+      "industry": "Construction Machinery & Heavy Transportation Equipment",
+      "validFrom": "1965-03-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000811156",
+      "symbol": "CMS",
+      "providerSymbols": {
+        "finnhub": "CMS"
+      },
+      "name": "CMS Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001071739",
+      "symbol": "CNC",
+      "providerSymbols": {
+        "finnhub": "CNC"
+      },
+      "name": "Centene Corporation",
+      "sector": "Health Care",
+      "industry": "Managed Health Care",
+      "validFrom": "2016-03-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001130310",
+      "symbol": "CNP",
+      "providerSymbols": {
+        "finnhub": "CNP"
+      },
+      "name": "CenterPoint Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "1985-07-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000927628",
+      "symbol": "COF",
+      "providerSymbols": {
+        "finnhub": "COF"
+      },
+      "name": "Capital One",
+      "sector": "Financials",
+      "industry": "Consumer Finance",
+      "validFrom": "1998-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000820318",
+      "symbol": "COHR",
+      "providerSymbols": {
+        "finnhub": "COHR"
+      },
+      "name": "Coherent Corp.",
+      "sector": "Information Technology",
+      "industry": "Electronic Components",
+      "validFrom": "2026-03-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001679788",
+      "symbol": "COIN",
+      "providerSymbols": {
+        "finnhub": "COIN"
+      },
+      "name": "Coinbase",
+      "sector": "Financials",
+      "industry": "Financial Exchanges & Data",
+      "validFrom": "2025-05-19",
+      "validTo": null
+    },
+    {
+      "cik": "0000711404",
+      "symbol": "COO",
+      "providerSymbols": {
+        "finnhub": "COO"
+      },
+      "name": "Cooper Companies (The)",
+      "sector": "Health Care",
+      "industry": "Health Care Supplies",
+      "validFrom": "2016-09-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001163165",
+      "symbol": "COP",
+      "providerSymbols": {
+        "finnhub": "COP"
+      },
+      "name": "ConocoPhillips",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001140859",
+      "symbol": "COR",
+      "providerSymbols": {
+        "finnhub": "COR"
+      },
+      "name": "Cencora",
+      "sector": "Health Care",
+      "industry": "Health Care Distributors",
+      "validFrom": "2001-08-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000909832",
+      "symbol": "COST",
+      "providerSymbols": {
+        "finnhub": "COST"
+      },
+      "name": "Costco",
+      "sector": "Consumer Staples",
+      "industry": "Consumer Staples Merchandise Retail",
+      "validFrom": "1993-10-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001175454",
+      "symbol": "CPAY",
+      "providerSymbols": {
+        "finnhub": "CPAY"
+      },
+      "name": "Corpay",
+      "sector": "Financials",
+      "industry": "Transaction & Payment Processing Services",
+      "validFrom": "2018-06-20",
+      "validTo": null
+    },
+    {
+      "cik": "0000900075",
+      "symbol": "CPRT",
+      "providerSymbols": {
+        "finnhub": "CPRT"
+      },
+      "name": "Copart",
+      "sector": "Industrials",
+      "industry": "Diversified Support Services",
+      "validFrom": "2018-07-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000906345",
+      "symbol": "CPT",
+      "providerSymbols": {
+        "finnhub": "CPT"
+      },
+      "name": "Camden Property Trust",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "validFrom": "2022-04-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000849395",
+      "symbol": "CRH",
+      "providerSymbols": {
+        "finnhub": "CRH"
+      },
+      "name": "CRH plc",
+      "sector": "Materials",
+      "industry": "Construction Materials",
+      "validFrom": "2025-12-22",
+      "validTo": null
+    },
+    {
+      "cik": "0001100682",
+      "symbol": "CRL",
+      "providerSymbols": {
+        "finnhub": "CRL"
+      },
+      "name": "Charles River Laboratories",
+      "sector": "Health Care",
+      "industry": "Life Sciences Tools & Services",
+      "validFrom": "2021-05-14",
+      "validTo": null
+    },
+    {
+      "cik": "0001108524",
+      "symbol": "CRM",
+      "providerSymbols": {
+        "finnhub": "CRM"
+      },
+      "name": "Salesforce",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2008-09-15",
+      "validTo": null
+    },
+    {
+      "cik": "0001535527",
+      "symbol": "CRWD",
+      "providerSymbols": {
+        "finnhub": "CRWD"
+      },
+      "name": "CrowdStrike",
+      "sector": "Information Technology",
+      "industry": "Systems Software",
+      "validFrom": "2024-06-24",
+      "validTo": null
+    },
+    {
+      "cik": "0000858877",
+      "symbol": "CSCO",
+      "providerSymbols": {
+        "finnhub": "CSCO"
+      },
+      "name": "Cisco",
+      "sector": "Information Technology",
+      "industry": "Communications Equipment",
+      "validFrom": "1993-12-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001057352",
+      "symbol": "CSGP",
+      "providerSymbols": {
+        "finnhub": "CSGP"
+      },
+      "name": "CoStar Group",
+      "sector": "Real Estate",
+      "industry": "Real Estate Services",
+      "validFrom": "2022-09-19",
+      "validTo": null
+    },
+    {
+      "cik": "0000277948",
+      "symbol": "CSX",
+      "providerSymbols": {
+        "finnhub": "CSX"
+      },
+      "name": "CSX Corporation",
+      "sector": "Industrials",
+      "industry": "Rail Transportation",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000723254",
+      "symbol": "CTAS",
+      "providerSymbols": {
+        "finnhub": "CTAS"
+      },
+      "name": "Cintas",
+      "sector": "Industrials",
+      "industry": "Diversified Support Services",
+      "validFrom": "2001-03-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001058290",
+      "symbol": "CTSH",
+      "providerSymbols": {
+        "finnhub": "CTSH"
+      },
+      "name": "Cognizant",
+      "sector": "Information Technology",
+      "industry": "IT Consulting & Other Services",
+      "validFrom": "2006-11-17",
+      "validTo": null
+    },
+    {
+      "cik": "0001755672",
+      "symbol": "CTVA",
+      "providerSymbols": {
+        "finnhub": "CTVA"
+      },
+      "name": "Corteva",
+      "sector": "Materials",
+      "industry": "Fertilizers & Agricultural Chemicals",
+      "validFrom": "2019-06-03",
+      "validTo": null
+    },
+    {
+      "cik": "0001690820",
+      "symbol": "CVNA",
+      "providerSymbols": {
+        "finnhub": "CVNA"
+      },
+      "name": "Carvana",
+      "sector": "Consumer Discretionary",
+      "industry": "Automotive Retail",
+      "validFrom": "2025-12-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000064803",
+      "symbol": "CVS",
+      "providerSymbols": {
+        "finnhub": "CVS"
+      },
+      "name": "CVS Health",
+      "sector": "Health Care",
+      "industry": "Health Care Services",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000093410",
+      "symbol": "CVX",
+      "providerSymbols": {
+        "finnhub": "CVX"
+      },
+      "name": "Chevron Corporation",
+      "sector": "Energy",
+      "industry": "Integrated Oil & Gas",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000715957",
+      "symbol": "D",
+      "providerSymbols": {
+        "finnhub": "D"
+      },
+      "name": "Dominion Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "2016-11-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000027904",
+      "symbol": "DAL",
+      "providerSymbols": {
+        "finnhub": "DAL"
+      },
+      "name": "Delta Air Lines",
+      "sector": "Industrials",
+      "industry": "Passenger Airlines",
+      "validFrom": "2013-09-11",
+      "validTo": null
+    },
+    {
+      "cik": "0001792789",
+      "symbol": "DASH",
+      "providerSymbols": {
+        "finnhub": "DASH"
+      },
+      "name": "DoorDash",
+      "sector": "Consumer Discretionary",
+      "industry": "Specialized Consumer Services",
+      "validFrom": "2025-03-24",
+      "validTo": null
+    },
+    {
+      "cik": "0001666700",
+      "symbol": "DD",
+      "providerSymbols": {
+        "finnhub": "DD"
+      },
+      "name": "DuPont",
+      "sector": "Materials",
+      "industry": "Specialty Chemicals",
+      "validFrom": "2019-06-03",
+      "validTo": null
+    },
+    {
+      "cik": "0001561550",
+      "symbol": "DDOG",
+      "providerSymbols": {
+        "finnhub": "DDOG"
+      },
+      "name": "Datadog",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2025-07-09",
+      "validTo": null
+    },
+    {
+      "cik": "0000315189",
+      "symbol": "DE",
+      "providerSymbols": {
+        "finnhub": "DE"
+      },
+      "name": "Deere & Company",
+      "sector": "Industrials",
+      "industry": "Agricultural & Farm Machinery",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000910521",
+      "symbol": "DECK",
+      "providerSymbols": {
+        "finnhub": "DECK"
+      },
+      "name": "Deckers Brands",
+      "sector": "Consumer Discretionary",
+      "industry": "Footwear",
+      "validFrom": "2024-03-18",
+      "validTo": null
+    },
+    {
+      "cik": "0001571996",
+      "symbol": "DELL",
+      "providerSymbols": {
+        "finnhub": "DELL"
+      },
+      "name": "Dell Technologies",
+      "sector": "Information Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "validFrom": "2024-09-23",
+      "validTo": null
+    },
+    {
+      "cik": "0000029534",
+      "symbol": "DG",
+      "providerSymbols": {
+        "finnhub": "DG"
+      },
+      "name": "Dollar General",
+      "sector": "Consumer Staples",
+      "industry": "Consumer Staples Merchandise Retail",
+      "validFrom": "2012-12-03",
+      "validTo": null
+    },
+    {
+      "cik": "0001022079",
+      "symbol": "DGX",
+      "providerSymbols": {
+        "finnhub": "DGX"
+      },
+      "name": "Quest Diagnostics",
+      "sector": "Health Care",
+      "industry": "Health Care Services",
+      "validFrom": "2002-12-12",
+      "validTo": null
+    },
+    {
+      "cik": "0000882184",
+      "symbol": "DHI",
+      "providerSymbols": {
+        "finnhub": "DHI"
+      },
+      "name": "D. R. Horton",
+      "sector": "Consumer Discretionary",
+      "industry": "Homebuilding",
+      "validFrom": "2005-06-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000313616",
+      "symbol": "DHR",
+      "providerSymbols": {
+        "finnhub": "DHR"
+      },
+      "name": "Danaher Corporation",
+      "sector": "Health Care",
+      "industry": "Life Sciences Tools & Services",
+      "validFrom": "1998-11-18",
+      "validTo": null
+    },
+    {
+      "cik": "0001744489",
+      "symbol": "DIS",
+      "providerSymbols": {
+        "finnhub": "DIS"
+      },
+      "name": "Walt Disney Company (The)",
+      "sector": "Communication Services",
+      "industry": "Movies & Entertainment",
+      "validFrom": "1976-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001297996",
+      "symbol": "DLR",
+      "providerSymbols": {
+        "finnhub": "DLR"
+      },
+      "name": "Digital Realty",
+      "sector": "Real Estate",
+      "industry": "Data Center REITs",
+      "validFrom": "2016-05-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000935703",
+      "symbol": "DLTR",
+      "providerSymbols": {
+        "finnhub": "DLTR"
+      },
+      "name": "Dollar Tree",
+      "sector": "Consumer Staples",
+      "industry": "Consumer Staples Merchandise Retail",
+      "validFrom": "2011-12-19",
+      "validTo": null
+    },
+    {
+      "cik": "0000765880",
+      "symbol": "DOC",
+      "providerSymbols": {
+        "finnhub": "DOC"
+      },
+      "name": "Healthpeak Properties",
+      "sector": "Real Estate",
+      "industry": "Health Care REITs",
+      "validFrom": "2008-03-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000029905",
+      "symbol": "DOV",
+      "providerSymbols": {
+        "finnhub": "DOV"
+      },
+      "name": "Dover Corporation",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "1985-10-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001751788",
+      "symbol": "DOW",
+      "providerSymbols": {
+        "finnhub": "DOW"
+      },
+      "name": "Dow Inc.",
+      "sector": "Materials",
+      "industry": "Commodity Chemicals",
+      "validFrom": "2019-04-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001286681",
+      "symbol": "DPZ",
+      "providerSymbols": {
+        "finnhub": "DPZ"
+      },
+      "name": "Domino's",
+      "sector": "Consumer Discretionary",
+      "industry": "Restaurants",
+      "validFrom": "2020-05-12",
+      "validTo": null
+    },
+    {
+      "cik": "0000940944",
+      "symbol": "DRI",
+      "providerSymbols": {
+        "finnhub": "DRI"
+      },
+      "name": "Darden Restaurants",
+      "sector": "Consumer Discretionary",
+      "industry": "Restaurants",
+      "validFrom": "1995-05-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000936340",
+      "symbol": "DTE",
+      "providerSymbols": {
+        "finnhub": "DTE"
+      },
+      "name": "DTE Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001326160",
+      "symbol": "DUK",
+      "providerSymbols": {
+        "finnhub": "DUK"
+      },
+      "name": "Duke Energy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "1976-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000927066",
+      "symbol": "DVA",
+      "providerSymbols": {
+        "finnhub": "DVA"
+      },
+      "name": "DaVita",
+      "sector": "Health Care",
+      "industry": "Health Care Services",
+      "validFrom": "2008-07-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001090012",
+      "symbol": "DVN",
+      "providerSymbols": {
+        "finnhub": "DVN"
+      },
+      "name": "Devon Energy",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "validFrom": "2000-08-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001093557",
+      "symbol": "DXCM",
+      "providerSymbols": {
+        "finnhub": "DXCM"
+      },
+      "name": "Dexcom",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "2020-05-12",
+      "validTo": null
+    },
+    {
+      "cik": "0000712515",
+      "symbol": "EA",
+      "providerSymbols": {
+        "finnhub": "EA"
+      },
+      "name": "Electronic Arts",
+      "sector": "Communication Services",
+      "industry": "Interactive Home Entertainment",
+      "validFrom": "2002-07-22",
+      "validTo": null
+    },
+    {
+      "cik": "0001065088",
+      "symbol": "EBAY",
+      "providerSymbols": {
+        "finnhub": "EBAY"
+      },
+      "name": "eBay Inc.",
+      "sector": "Consumer Discretionary",
+      "industry": "Broadline Retail",
+      "validFrom": "2002-07-22",
+      "validTo": null
+    },
+    {
+      "cik": "0001415404",
+      "symbol": "ECHO",
+      "providerSymbols": {
+        "finnhub": "ECHO"
+      },
+      "name": "EchoStar",
+      "sector": "Communication Services",
+      "industry": "Wireless Telecommunication Services",
+      "validFrom": "2026-03-23",
+      "validTo": null
+    },
+    {
+      "cik": "0000031462",
+      "symbol": "ECL",
+      "providerSymbols": {
+        "finnhub": "ECL"
+      },
+      "name": "Ecolab",
+      "sector": "Materials",
+      "industry": "Specialty Chemicals",
+      "validFrom": "1989-01-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001047862",
+      "symbol": "ED",
+      "providerSymbols": {
+        "finnhub": "ED"
+      },
+      "name": "Consolidated Edison",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000033185",
+      "symbol": "EFX",
+      "providerSymbols": {
+        "finnhub": "EFX"
+      },
+      "name": "Equifax",
+      "sector": "Industrials",
+      "industry": "Research & Consulting Services",
+      "validFrom": "1997-06-19",
+      "validTo": null
+    },
+    {
+      "cik": "0001095073",
+      "symbol": "EG",
+      "providerSymbols": {
+        "finnhub": "EG"
+      },
+      "name": "Everest Group",
+      "sector": "Financials",
+      "industry": "Reinsurance",
+      "validFrom": "2017-06-19",
+      "validTo": null
+    },
+    {
+      "cik": "0000827052",
+      "symbol": "EIX",
+      "providerSymbols": {
+        "finnhub": "EIX"
+      },
+      "name": "Edison International",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001001250",
+      "symbol": "EL",
+      "providerSymbols": {
+        "finnhub": "EL"
+      },
+      "name": "Estée Lauder Companies (The)",
+      "sector": "Consumer Staples",
+      "industry": "Personal Care Products",
+      "validFrom": "2006-01-05",
+      "validTo": null
+    },
+    {
+      "cik": "0001156039",
+      "symbol": "ELV",
+      "providerSymbols": {
+        "finnhub": "ELV"
+      },
+      "name": "Elevance Health",
+      "sector": "Health Care",
+      "industry": "Managed Health Care",
+      "validFrom": "2002-07-25",
+      "validTo": null
+    },
+    {
+      "cik": "0000105634",
+      "symbol": "EME",
+      "providerSymbols": {
+        "finnhub": "EME"
+      },
+      "name": "Emcor",
+      "sector": "Industrials",
+      "industry": "Construction & Engineering",
+      "validFrom": "2025-09-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000032604",
+      "symbol": "EMR",
+      "providerSymbols": {
+        "finnhub": "EMR"
+      },
+      "name": "Emerson Electric",
+      "sector": "Industrials",
+      "industry": "Electrical Components & Equipment",
+      "validFrom": "1965-03-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000821189",
+      "symbol": "EOG",
+      "providerSymbols": {
+        "finnhub": "EOG"
+      },
+      "name": "EOG Resources",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "validFrom": "2000-11-02",
+      "validTo": null
+    },
+    {
+      "cik": "0001101239",
+      "symbol": "EQIX",
+      "providerSymbols": {
+        "finnhub": "EQIX"
+      },
+      "name": "Equinix",
+      "sector": "Real Estate",
+      "industry": "Data Center REITs",
+      "validFrom": "2015-03-20",
+      "validTo": null
+    },
+    {
+      "cik": "0000906107",
+      "symbol": "EQR",
+      "providerSymbols": {
+        "finnhub": "EQR"
+      },
+      "name": "Equity Residential",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "validFrom": "2001-12-03",
+      "validTo": null
+    },
+    {
+      "cik": "0000033213",
+      "symbol": "EQT",
+      "providerSymbols": {
+        "finnhub": "EQT"
+      },
+      "name": "EQT Corporation",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "validFrom": "2022-10-03",
+      "validTo": null
+    },
+    {
+      "cik": "0000922621",
+      "symbol": "ERIE",
+      "providerSymbols": {
+        "finnhub": "ERIE"
+      },
+      "name": "Erie Indemnity",
+      "sector": "Financials",
+      "industry": "Insurance Brokers",
+      "validFrom": "2024-09-23",
+      "validTo": null
+    },
+    {
+      "cik": "0000072741",
+      "symbol": "ES",
+      "providerSymbols": {
+        "finnhub": "ES"
+      },
+      "name": "Eversource Energy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "2009-07-24",
+      "validTo": null
+    },
+    {
+      "cik": "0000920522",
+      "symbol": "ESS",
+      "providerSymbols": {
+        "finnhub": "ESS"
+      },
+      "name": "Essex Property Trust",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "validFrom": "2014-04-02",
+      "validTo": null
+    },
+    {
+      "cik": "0001551182",
+      "symbol": "ETN",
+      "providerSymbols": {
+        "finnhub": "ETN"
+      },
+      "name": "Eaton Corporation",
+      "sector": "Industrials",
+      "industry": "Electrical Components & Equipment",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000065984",
+      "symbol": "ETR",
+      "providerSymbols": {
+        "finnhub": "ETR"
+      },
+      "name": "Entergy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001711269",
+      "symbol": "EVRG",
+      "providerSymbols": {
+        "finnhub": "EVRG"
+      },
+      "name": "Evergy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "2018-06-05",
+      "validTo": null
+    },
+    {
+      "cik": "0001099800",
+      "symbol": "EW",
+      "providerSymbols": {
+        "finnhub": "EW"
+      },
+      "name": "Edwards Lifesciences",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "2011-04-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001109357",
+      "symbol": "EXC",
+      "providerSymbols": {
+        "finnhub": "EXC"
+      },
+      "name": "Exelon",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000895126",
+      "symbol": "EXE",
+      "providerSymbols": {
+        "finnhub": "EXE"
+      },
+      "name": "Expand Energy",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "validFrom": "2025-03-24",
+      "validTo": null
+    },
+    {
+      "cik": "0000746515",
+      "symbol": "EXPD",
+      "providerSymbols": {
+        "finnhub": "EXPD"
+      },
+      "name": "Expeditors International",
+      "sector": "Industrials",
+      "industry": "Air Freight & Logistics",
+      "validFrom": "2007-10-10",
+      "validTo": null
+    },
+    {
+      "cik": "0001324424",
+      "symbol": "EXPE",
+      "providerSymbols": {
+        "finnhub": "EXPE"
+      },
+      "name": "Expedia Group",
+      "sector": "Consumer Discretionary",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "validFrom": "2007-10-02",
+      "validTo": null
+    },
+    {
+      "cik": "0001289490",
+      "symbol": "EXR",
+      "providerSymbols": {
+        "finnhub": "EXR"
+      },
+      "name": "Extra Space Storage",
+      "sector": "Real Estate",
+      "industry": "Self-Storage REITs",
+      "validFrom": "2016-01-19",
+      "validTo": null
+    },
+    {
+      "cik": "0000037996",
+      "symbol": "F",
+      "providerSymbols": {
+        "finnhub": "F"
+      },
+      "name": "Ford Motor Company",
+      "sector": "Consumer Discretionary",
+      "industry": "Automobile Manufacturers",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001539838",
+      "symbol": "FANG",
+      "providerSymbols": {
+        "finnhub": "FANG"
+      },
+      "name": "Diamondback Energy",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "validFrom": "2018-12-03",
+      "validTo": null
+    },
+    {
+      "cik": "0000815556",
+      "symbol": "FAST",
+      "providerSymbols": {
+        "finnhub": "FAST"
+      },
+      "name": "Fastenal",
+      "sector": "Industrials",
+      "industry": "Trading Companies & Distributors",
+      "validFrom": "2008-09-15",
+      "validTo": null
+    },
+    {
+      "cik": "0000831259",
+      "symbol": "FCX",
+      "providerSymbols": {
+        "finnhub": "FCX"
+      },
+      "name": "Freeport-McMoRan",
+      "sector": "Materials",
+      "industry": "Copper",
+      "validFrom": "2011-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001013237",
+      "symbol": "FDS",
+      "providerSymbols": {
+        "finnhub": "FDS"
+      },
+      "name": "FactSet",
+      "sector": "Financials",
+      "industry": "Financial Exchanges & Data",
+      "validFrom": "2021-12-20",
+      "validTo": null
+    },
+    {
+      "cik": "0001048911",
+      "symbol": "FDX",
+      "providerSymbols": {
+        "finnhub": "FDX"
+      },
+      "name": "FedEx",
+      "sector": "Industrials",
+      "industry": "Air Freight & Logistics",
+      "validFrom": "1980-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0002082247",
+      "symbol": "FDXF",
+      "providerSymbols": {
+        "finnhub": "FDXF"
+      },
+      "name": "FedEx Freight",
+      "sector": "Industrials",
+      "industry": "Cargo Ground Transportation",
+      "validFrom": "2026-06-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001031296",
+      "symbol": "FE",
+      "providerSymbols": {
+        "finnhub": "FE"
+      },
+      "name": "FirstEnergy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "1997-11-28",
+      "validTo": null
+    },
+    {
+      "cik": "0001048695",
+      "symbol": "FFIV",
+      "providerSymbols": {
+        "finnhub": "FFIV"
+      },
+      "name": "F5, Inc.",
+      "sector": "Information Technology",
+      "industry": "Communications Equipment",
+      "validFrom": "2010-12-20",
+      "validTo": null
+    },
+    {
+      "cik": "0000814547",
+      "symbol": "FICO",
+      "providerSymbols": {
+        "finnhub": "FICO"
+      },
+      "name": "Fair Isaac",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2023-03-20",
+      "validTo": null
+    },
+    {
+      "cik": "0001136893",
+      "symbol": "FIS",
+      "providerSymbols": {
+        "finnhub": "FIS"
+      },
+      "name": "Fidelity National Information Services",
+      "sector": "Financials",
+      "industry": "Transaction & Payment Processing Services",
+      "validFrom": "2006-11-10",
+      "validTo": null
+    },
+    {
+      "cik": "0000798354",
+      "symbol": "FISV",
+      "providerSymbols": {
+        "finnhub": "FISV"
+      },
+      "name": "Fiserv",
+      "sector": "Financials",
+      "industry": "Transaction & Payment Processing Services",
+      "validFrom": "2001-04-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000035527",
+      "symbol": "FITB",
+      "providerSymbols": {
+        "finnhub": "FITB"
+      },
+      "name": "Fifth Third Bancorp",
+      "sector": "Financials",
+      "industry": "Regional Banks",
+      "validFrom": "1996-03-29",
+      "validTo": null
+    },
+    {
+      "cik": "0001035983",
+      "symbol": "FIX",
+      "providerSymbols": {
+        "finnhub": "FIX"
+      },
+      "name": "Comfort Systems USA",
+      "sector": "Industrials",
+      "industry": "Construction & Engineering",
+      "validFrom": "2025-12-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000866374",
+      "symbol": "FLEX",
+      "providerSymbols": {
+        "finnhub": "FLEX"
+      },
+      "name": "Flex Ltd.",
+      "sector": "Information Technology",
+      "industry": "Electronic Manufacturing Services",
+      "validFrom": "2026-06-22",
+      "validTo": null
+    },
+    {
+      "cik": "0001754301",
+      "symbol": "FOX",
+      "providerSymbols": {
+        "finnhub": "FOX"
+      },
+      "name": "Fox Corporation (Class B)",
+      "sector": "Communication Services",
+      "industry": "Broadcasting",
+      "validFrom": "2019-03-19",
+      "validTo": null
+    },
+    {
+      "cik": "0001754301",
+      "symbol": "FOXA",
+      "providerSymbols": {
+        "finnhub": "FOXA"
+      },
+      "name": "Fox Corporation (Class A)",
+      "sector": "Communication Services",
+      "industry": "Broadcasting",
+      "validFrom": "2019-03-19",
+      "validTo": null
+    },
+    {
+      "cik": "0000034903",
+      "symbol": "FRT",
+      "providerSymbols": {
+        "finnhub": "FRT"
+      },
+      "name": "Federal Realty Investment Trust",
+      "sector": "Real Estate",
+      "industry": "Retail REITs",
+      "validFrom": "2016-02-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001274494",
+      "symbol": "FSLR",
+      "providerSymbols": {
+        "finnhub": "FSLR"
+      },
+      "name": "First Solar",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "2022-12-19",
+      "validTo": null
+    },
+    {
+      "cik": "0001262039",
+      "symbol": "FTNT",
+      "providerSymbols": {
+        "finnhub": "FTNT"
+      },
+      "name": "Fortinet",
+      "sector": "Information Technology",
+      "industry": "Systems Software",
+      "validFrom": "2018-10-11",
+      "validTo": null
+    },
+    {
+      "cik": "0001659166",
+      "symbol": "FTV",
+      "providerSymbols": {
+        "finnhub": "FTV"
+      },
+      "name": "Fortive",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "2016-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000040533",
+      "symbol": "GD",
+      "providerSymbols": {
+        "finnhub": "GD"
+      },
+      "name": "General Dynamics",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001609711",
+      "symbol": "GDDY",
+      "providerSymbols": {
+        "finnhub": "GDDY"
+      },
+      "name": "GoDaddy",
+      "sector": "Information Technology",
+      "industry": "Internet Services & Infrastructure",
+      "validFrom": "2024-06-24",
+      "validTo": null
+    },
+    {
+      "cik": "0000040545",
+      "symbol": "GE",
+      "providerSymbols": {
+        "finnhub": "GE"
+      },
+      "name": "GE Aerospace",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001932393",
+      "symbol": "GEHC",
+      "providerSymbols": {
+        "finnhub": "GEHC"
+      },
+      "name": "GE HealthCare",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "2023-01-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000849399",
+      "symbol": "GEN",
+      "providerSymbols": {
+        "finnhub": "GEN"
+      },
+      "name": "Gen Digital",
+      "sector": "Information Technology",
+      "industry": "Systems Software",
+      "validFrom": "2003-03-25",
+      "validTo": null
+    },
+    {
+      "cik": "0001996810",
+      "symbol": "GEV",
+      "providerSymbols": {
+        "finnhub": "GEV"
+      },
+      "name": "GE Vernova",
+      "sector": "Industrials",
+      "industry": "Heavy Electrical Equipment",
+      "validFrom": "2024-04-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000882095",
+      "symbol": "GILD",
+      "providerSymbols": {
+        "finnhub": "GILD"
+      },
+      "name": "Gilead Sciences",
+      "sector": "Health Care",
+      "industry": "Biotechnology",
+      "validFrom": "2004-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000040704",
+      "symbol": "GIS",
+      "providerSymbols": {
+        "finnhub": "GIS"
+      },
+      "name": "General Mills",
+      "sector": "Consumer Staples",
+      "industry": "Packaged Foods & Meats",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000320335",
+      "symbol": "GL",
+      "providerSymbols": {
+        "finnhub": "GL"
+      },
+      "name": "Globe Life",
+      "sector": "Financials",
+      "industry": "Life & Health Insurance",
+      "validFrom": "1989-04-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000024741",
+      "symbol": "GLW",
+      "providerSymbols": {
+        "finnhub": "GLW"
+      },
+      "name": "Corning Inc.",
+      "sector": "Information Technology",
+      "industry": "Electronic Components",
+      "validFrom": "1995-02-27",
+      "validTo": null
+    },
+    {
+      "cik": "0001467858",
+      "symbol": "GM",
+      "providerSymbols": {
+        "finnhub": "GM"
+      },
+      "name": "General Motors",
+      "sector": "Consumer Discretionary",
+      "industry": "Automobile Manufacturers",
+      "validFrom": "2013-06-06",
+      "validTo": null
+    },
+    {
+      "cik": "0001474735",
+      "symbol": "GNRC",
+      "providerSymbols": {
+        "finnhub": "GNRC"
+      },
+      "name": "Generac",
+      "sector": "Industrials",
+      "industry": "Heavy Electrical Equipment",
+      "validFrom": "2021-03-22",
+      "validTo": null
+    },
+    {
+      "cik": "0001652044",
+      "symbol": "GOOG",
+      "providerSymbols": {
+        "finnhub": "GOOG"
+      },
+      "name": "Alphabet Inc. (Class C)",
+      "sector": "Communication Services",
+      "industry": "Interactive Media & Services",
+      "validFrom": "2014-04-03",
+      "validTo": null
+    },
+    {
+      "cik": "0001652044",
+      "symbol": "GOOGL",
+      "providerSymbols": {
+        "finnhub": "GOOGL"
+      },
+      "name": "Alphabet Inc. (Class A)",
+      "sector": "Communication Services",
+      "industry": "Interactive Media & Services",
+      "validFrom": "2006-04-03",
+      "validTo": null
+    },
+    {
+      "cik": "0000040987",
+      "symbol": "GPC",
+      "providerSymbols": {
+        "finnhub": "GPC"
+      },
+      "name": "Genuine Parts Company",
+      "sector": "Consumer Discretionary",
+      "industry": "Distributors",
+      "validFrom": "1973-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001123360",
+      "symbol": "GPN",
+      "providerSymbols": {
+        "finnhub": "GPN"
+      },
+      "name": "Global Payments",
+      "sector": "Financials",
+      "industry": "Transaction & Payment Processing Services",
+      "validFrom": "2016-04-25",
+      "validTo": null
+    },
+    {
+      "cik": "0001121788",
+      "symbol": "GRMN",
+      "providerSymbols": {
+        "finnhub": "GRMN"
+      },
+      "name": "Garmin",
+      "sector": "Consumer Discretionary",
+      "industry": "Consumer Electronics",
+      "validFrom": "2012-12-12",
+      "validTo": null
+    },
+    {
+      "cik": "0000886982",
+      "symbol": "GS",
+      "providerSymbols": {
+        "finnhub": "GS"
+      },
+      "name": "Goldman Sachs",
+      "sector": "Financials",
+      "industry": "Investment Banking & Brokerage",
+      "validFrom": "2002-07-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000277135",
+      "symbol": "GWW",
+      "providerSymbols": {
+        "finnhub": "GWW"
+      },
+      "name": "W. W. Grainger",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "1981-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000045012",
+      "symbol": "HAL",
+      "providerSymbols": {
+        "finnhub": "HAL"
+      },
+      "name": "Halliburton",
+      "sector": "Energy",
+      "industry": "Oil & Gas Equipment & Services",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000046080",
+      "symbol": "HAS",
+      "providerSymbols": {
+        "finnhub": "HAS"
+      },
+      "name": "Hasbro",
+      "sector": "Consumer Discretionary",
+      "industry": "Leisure Products",
+      "validFrom": "1984-09-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000049196",
+      "symbol": "HBAN",
+      "providerSymbols": {
+        "finnhub": "HBAN"
+      },
+      "name": "Huntington Bancshares",
+      "sector": "Financials",
+      "industry": "Regional Banks",
+      "validFrom": "1997-08-28",
+      "validTo": null
+    },
+    {
+      "cik": "0000860730",
+      "symbol": "HCA",
+      "providerSymbols": {
+        "finnhub": "HCA"
+      },
+      "name": "HCA Healthcare",
+      "sector": "Health Care",
+      "industry": "Health Care Facilities",
+      "validFrom": "2015-01-27",
+      "validTo": null
+    },
+    {
+      "cik": "0000354950",
+      "symbol": "HD",
+      "providerSymbols": {
+        "finnhub": "HD"
+      },
+      "name": "Home Depot (The)",
+      "sector": "Consumer Discretionary",
+      "industry": "Home Improvement Retail",
+      "validFrom": "1988-03-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000874766",
+      "symbol": "HIG",
+      "providerSymbols": {
+        "finnhub": "HIG"
+      },
+      "name": "Hartford (The)",
+      "sector": "Financials",
+      "industry": "Property & Casualty Insurance",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001501585",
+      "symbol": "HII",
+      "providerSymbols": {
+        "finnhub": "HII"
+      },
+      "name": "Huntington Ingalls Industries",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "2018-01-03",
+      "validTo": null
+    },
+    {
+      "cik": "0001585689",
+      "symbol": "HLT",
+      "providerSymbols": {
+        "finnhub": "HLT"
+      },
+      "name": "Hilton Worldwide",
+      "sector": "Consumer Discretionary",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "validFrom": "2017-06-19",
+      "validTo": null
+    },
+    {
+      "cik": "0000773840",
+      "symbol": "HON",
+      "providerSymbols": {
+        "finnhub": "HON"
+      },
+      "name": "Honeywell Technologies",
+      "sector": "Industrials",
+      "industry": "Industrial Conglomerates",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0002089271",
+      "symbol": "HONA",
+      "providerSymbols": {
+        "finnhub": "HONA"
+      },
+      "name": "Honeywell Aerospace",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "2026-06-29",
+      "validTo": null
+    },
+    {
+      "cik": "0001783879",
+      "symbol": "HOOD",
+      "providerSymbols": {
+        "finnhub": "HOOD"
+      },
+      "name": "Robinhood Markets",
+      "sector": "Financials",
+      "industry": "Investment Banking & Brokerage",
+      "validFrom": "2025-09-22",
+      "validTo": null
+    },
+    {
+      "cik": "0001645590",
+      "symbol": "HPE",
+      "providerSymbols": {
+        "finnhub": "HPE"
+      },
+      "name": "Hewlett Packard Enterprise",
+      "sector": "Information Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "validFrom": "2015-11-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000047217",
+      "symbol": "HPQ",
+      "providerSymbols": {
+        "finnhub": "HPQ"
+      },
+      "name": "HP Inc.",
+      "sector": "Information Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "validFrom": "1974-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000048465",
+      "symbol": "HRL",
+      "providerSymbols": {
+        "finnhub": "HRL"
+      },
+      "name": "Hormel Foods",
+      "sector": "Consumer Staples",
+      "industry": "Packaged Foods & Meats",
+      "validFrom": "2009-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001000228",
+      "symbol": "HSIC",
+      "providerSymbols": {
+        "finnhub": "HSIC"
+      },
+      "name": "Henry Schein",
+      "sector": "Health Care",
+      "industry": "Health Care Distributors",
+      "validFrom": "2015-03-17",
+      "validTo": null
+    },
+    {
+      "cik": "0001070750",
+      "symbol": "HST",
+      "providerSymbols": {
+        "finnhub": "HST"
+      },
+      "name": "Host Hotels & Resorts",
+      "sector": "Real Estate",
+      "industry": "Hotel & Resort REITs",
+      "validFrom": "2007-03-20",
+      "validTo": null
+    },
+    {
+      "cik": "0000047111",
+      "symbol": "HSY",
+      "providerSymbols": {
+        "finnhub": "HSY"
+      },
+      "name": "Hershey Company (The)",
+      "sector": "Consumer Staples",
+      "industry": "Packaged Foods & Meats",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000048898",
+      "symbol": "HUBB",
+      "providerSymbols": {
+        "finnhub": "HUBB"
+      },
+      "name": "Hubbell Incorporated",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "2023-10-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000049071",
+      "symbol": "HUM",
+      "providerSymbols": {
+        "finnhub": "HUM"
+      },
+      "name": "Humana",
+      "sector": "Health Care",
+      "industry": "Managed Health Care",
+      "validFrom": "2012-12-10",
+      "validTo": null
+    },
+    {
+      "cik": "0000004281",
+      "symbol": "HWM",
+      "providerSymbols": {
+        "finnhub": "HWM"
+      },
+      "name": "Howmet Aerospace",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "2016-10-21",
+      "validTo": null
+    },
+    {
+      "cik": "0001381197",
+      "symbol": "IBKR",
+      "providerSymbols": {
+        "finnhub": "IBKR"
+      },
+      "name": "Interactive Brokers",
+      "sector": "Financials",
+      "industry": "Investment Banking & Brokerage",
+      "validFrom": "2025-08-28",
+      "validTo": null
+    },
+    {
+      "cik": "0000051143",
+      "symbol": "IBM",
+      "providerSymbols": {
+        "finnhub": "IBM"
+      },
+      "name": "IBM",
+      "sector": "Information Technology",
+      "industry": "IT Consulting & Other Services",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001571949",
+      "symbol": "ICE",
+      "providerSymbols": {
+        "finnhub": "ICE"
+      },
+      "name": "Intercontinental Exchange",
+      "sector": "Financials",
+      "industry": "Financial Exchanges & Data",
+      "validFrom": "2007-09-26",
+      "validTo": null
+    },
+    {
+      "cik": "0000874716",
+      "symbol": "IDXX",
+      "providerSymbols": {
+        "finnhub": "IDXX"
+      },
+      "name": "Idexx Laboratories",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "2017-01-05",
+      "validTo": null
+    },
+    {
+      "cik": "0000832101",
+      "symbol": "IEX",
+      "providerSymbols": {
+        "finnhub": "IEX"
+      },
+      "name": "IDEX Corporation",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "2019-08-09",
+      "validTo": null
+    },
+    {
+      "cik": "0000051253",
+      "symbol": "IFF",
+      "providerSymbols": {
+        "finnhub": "IFF"
+      },
+      "name": "International Flavors & Fragrances",
+      "sector": "Materials",
+      "industry": "Specialty Chemicals",
+      "validFrom": "1976-03-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000879169",
+      "symbol": "INCY",
+      "providerSymbols": {
+        "finnhub": "INCY"
+      },
+      "name": "Incyte",
+      "sector": "Health Care",
+      "industry": "Biotechnology",
+      "validFrom": "2017-02-28",
+      "validTo": null
+    },
+    {
+      "cik": "0000050863",
+      "symbol": "INTC",
+      "providerSymbols": {
+        "finnhub": "INTC"
+      },
+      "name": "Intel",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "1976-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000896878",
+      "symbol": "INTU",
+      "providerSymbols": {
+        "finnhub": "INTU"
+      },
+      "name": "Intuit",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2000-12-05",
+      "validTo": null
+    },
+    {
+      "cik": "0001687229",
+      "symbol": "INVH",
+      "providerSymbols": {
+        "finnhub": "INVH"
+      },
+      "name": "Invitation Homes",
+      "sector": "Real Estate",
+      "industry": "Single-Family Residential REITs",
+      "validFrom": "2022-09-19",
+      "validTo": null
+    },
+    {
+      "cik": "0000051434",
+      "symbol": "IP",
+      "providerSymbols": {
+        "finnhub": "IP"
+      },
+      "name": "International Paper",
+      "sector": "Materials",
+      "industry": "Paper & Plastic Packaging Products & Materials",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001478242",
+      "symbol": "IQV",
+      "providerSymbols": {
+        "finnhub": "IQV"
+      },
+      "name": "IQVIA",
+      "sector": "Health Care",
+      "industry": "Life Sciences Tools & Services",
+      "validFrom": "2017-08-29",
+      "validTo": null
+    },
+    {
+      "cik": "0001699150",
+      "symbol": "IR",
+      "providerSymbols": {
+        "finnhub": "IR"
+      },
+      "name": "Ingersoll Rand",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "2020-03-03",
+      "validTo": null
+    },
+    {
+      "cik": "0001020569",
+      "symbol": "IRM",
+      "providerSymbols": {
+        "finnhub": "IRM"
+      },
+      "name": "Iron Mountain",
+      "sector": "Real Estate",
+      "industry": "Other Specialized REITs",
+      "validFrom": "2009-01-06",
+      "validTo": null
+    },
+    {
+      "cik": "0001035267",
+      "symbol": "ISRG",
+      "providerSymbols": {
+        "finnhub": "ISRG"
+      },
+      "name": "Intuitive Surgical",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "2008-06-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000749251",
+      "symbol": "IT",
+      "providerSymbols": {
+        "finnhub": "IT"
+      },
+      "name": "Gartner",
+      "sector": "Information Technology",
+      "industry": "IT Consulting & Other Services",
+      "validFrom": "2017-04-05",
+      "validTo": null
+    },
+    {
+      "cik": "0000049826",
+      "symbol": "ITW",
+      "providerSymbols": {
+        "finnhub": "ITW"
+      },
+      "name": "Illinois Tool Works",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "1986-02-28",
+      "validTo": null
+    },
+    {
+      "cik": "0000914208",
+      "symbol": "IVZ",
+      "providerSymbols": {
+        "finnhub": "IVZ"
+      },
+      "name": "Invesco",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "2008-08-21",
+      "validTo": null
+    },
+    {
+      "cik": "0000052988",
+      "symbol": "J",
+      "providerSymbols": {
+        "finnhub": "J"
+      },
+      "name": "Jacobs Solutions",
+      "sector": "Industrials",
+      "industry": "Construction & Engineering",
+      "validFrom": "2007-10-26",
+      "validTo": null
+    },
+    {
+      "cik": "0000728535",
+      "symbol": "JBHT",
+      "providerSymbols": {
+        "finnhub": "JBHT"
+      },
+      "name": "J.B. Hunt",
+      "sector": "Industrials",
+      "industry": "Cargo Ground Transportation",
+      "validFrom": "2015-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000898293",
+      "symbol": "JBL",
+      "providerSymbols": {
+        "finnhub": "JBL"
+      },
+      "name": "Jabil",
+      "sector": "Information Technology",
+      "industry": "Electronic Manufacturing Services",
+      "validFrom": "2023-12-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000833444",
+      "symbol": "JCI",
+      "providerSymbols": {
+        "finnhub": "JCI"
+      },
+      "name": "Johnson Controls",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "validFrom": "2010-08-27",
+      "validTo": null
+    },
+    {
+      "cik": "0000779152",
+      "symbol": "JKHY",
+      "providerSymbols": {
+        "finnhub": "JKHY"
+      },
+      "name": "Jack Henry & Associates",
+      "sector": "Financials",
+      "industry": "Transaction & Payment Processing Services",
+      "validFrom": "2018-11-13",
+      "validTo": null
+    },
+    {
+      "cik": "0000200406",
+      "symbol": "JNJ",
+      "providerSymbols": {
+        "finnhub": "JNJ"
+      },
+      "name": "Johnson & Johnson",
+      "sector": "Health Care",
+      "industry": "Pharmaceuticals",
+      "validFrom": "1973-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000019617",
+      "symbol": "JPM",
+      "providerSymbols": {
+        "finnhub": "JPM"
+      },
+      "name": "JPMorgan Chase",
+      "sector": "Financials",
+      "industry": "Diversified Banks",
+      "validFrom": "1975-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001418135",
+      "symbol": "KDP",
+      "providerSymbols": {
+        "finnhub": "KDP"
+      },
+      "name": "Keurig Dr Pepper",
+      "sector": "Consumer Staples",
+      "industry": "Soft Drinks & Non-alcoholic Beverages",
+      "validFrom": "2022-06-21",
+      "validTo": null
+    },
+    {
+      "cik": "0000091576",
+      "symbol": "KEY",
+      "providerSymbols": {
+        "finnhub": "KEY"
+      },
+      "name": "KeyCorp",
+      "sector": "Financials",
+      "industry": "Regional Banks",
+      "validFrom": "1994-03-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001601046",
+      "symbol": "KEYS",
+      "providerSymbols": {
+        "finnhub": "KEYS"
+      },
+      "name": "Keysight Technologies",
+      "sector": "Information Technology",
+      "industry": "Electronic Equipment & Instruments",
+      "validFrom": "2018-11-06",
+      "validTo": null
+    },
+    {
+      "cik": "0001637459",
+      "symbol": "KHC",
+      "providerSymbols": {
+        "finnhub": "KHC"
+      },
+      "name": "Kraft Heinz",
+      "sector": "Consumer Staples",
+      "industry": "Packaged Foods & Meats",
+      "validFrom": "2015-07-06",
+      "validTo": null
+    },
+    {
+      "cik": "0000879101",
+      "symbol": "KIM",
+      "providerSymbols": {
+        "finnhub": "KIM"
+      },
+      "name": "Kimco Realty",
+      "sector": "Real Estate",
+      "industry": "Retail REITs",
+      "validFrom": "2006-04-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001404912",
+      "symbol": "KKR",
+      "providerSymbols": {
+        "finnhub": "KKR"
+      },
+      "name": "KKR & Co.",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "2024-06-24",
+      "validTo": null
+    },
+    {
+      "cik": "0000319201",
+      "symbol": "KLAC",
+      "providerSymbols": {
+        "finnhub": "KLAC"
+      },
+      "name": "KLA Corporation",
+      "sector": "Information Technology",
+      "industry": "Semiconductor Materials & Equipment",
+      "validFrom": "1997-09-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000055785",
+      "symbol": "KMB",
+      "providerSymbols": {
+        "finnhub": "KMB"
+      },
+      "name": "Kimberly-Clark",
+      "sector": "Consumer Staples",
+      "industry": "Household Products",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001506307",
+      "symbol": "KMI",
+      "providerSymbols": {
+        "finnhub": "KMI"
+      },
+      "name": "Kinder Morgan",
+      "sector": "Energy",
+      "industry": "Oil & Gas Storage & Transportation",
+      "validFrom": "2012-05-25",
+      "validTo": null
+    },
+    {
+      "cik": "0000021344",
+      "symbol": "KO",
+      "providerSymbols": {
+        "finnhub": "KO"
+      },
+      "name": "Coca-Cola Company (The)",
+      "sector": "Consumer Staples",
+      "industry": "Soft Drinks & Non-alcoholic Beverages",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000056873",
+      "symbol": "KR",
+      "providerSymbols": {
+        "finnhub": "KR"
+      },
+      "name": "Kroger",
+      "sector": "Consumer Staples",
+      "industry": "Food Retail",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001944048",
+      "symbol": "KVUE",
+      "providerSymbols": {
+        "finnhub": "KVUE"
+      },
+      "name": "Kenvue",
+      "sector": "Consumer Staples",
+      "industry": "Personal Care Products",
+      "validFrom": "2023-08-25",
+      "validTo": null
+    },
+    {
+      "cik": "0000060086",
+      "symbol": "L",
+      "providerSymbols": {
+        "finnhub": "L"
+      },
+      "name": "Loews Corporation",
+      "sector": "Financials",
+      "industry": "Multi-line Insurance",
+      "validFrom": "1995-05-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001336920",
+      "symbol": "LDOS",
+      "providerSymbols": {
+        "finnhub": "LDOS"
+      },
+      "name": "Leidos",
+      "sector": "Industrials",
+      "industry": "Diversified Support Services",
+      "validFrom": "2019-08-09",
+      "validTo": null
+    },
+    {
+      "cik": "0000920760",
+      "symbol": "LEN",
+      "providerSymbols": {
+        "finnhub": "LEN"
+      },
+      "name": "Lennar",
+      "sector": "Consumer Discretionary",
+      "industry": "Homebuilding",
+      "validFrom": "2005-10-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000920148",
+      "symbol": "LH",
+      "providerSymbols": {
+        "finnhub": "LH"
+      },
+      "name": "Labcorp",
+      "sector": "Health Care",
+      "industry": "Health Care Services",
+      "validFrom": "2004-11-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000202058",
+      "symbol": "LHX",
+      "providerSymbols": {
+        "finnhub": "LHX"
+      },
+      "name": "L3Harris",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "2008-09-22",
+      "validTo": null
+    },
+    {
+      "cik": "0001069202",
+      "symbol": "LII",
+      "providerSymbols": {
+        "finnhub": "LII"
+      },
+      "name": "Lennox International",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "validFrom": "2024-12-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001707925",
+      "symbol": "LIN",
+      "providerSymbols": {
+        "finnhub": "LIN"
+      },
+      "name": "Linde plc",
+      "sector": "Materials",
+      "industry": "Industrial Gases",
+      "validFrom": "1992-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001633978",
+      "symbol": "LITE",
+      "providerSymbols": {
+        "finnhub": "LITE"
+      },
+      "name": "Lumentum",
+      "sector": "Information Technology",
+      "industry": "Communications Equipment",
+      "validFrom": "2026-03-23",
+      "validTo": null
+    },
+    {
+      "cik": "0000059478",
+      "symbol": "LLY",
+      "providerSymbols": {
+        "finnhub": "LLY"
+      },
+      "name": "Lilly (Eli)",
+      "sector": "Health Care",
+      "industry": "Pharmaceuticals",
+      "validFrom": "1970-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000936468",
+      "symbol": "LMT",
+      "providerSymbols": {
+        "finnhub": "LMT"
+      },
+      "name": "Lockheed Martin",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000352541",
+      "symbol": "LNT",
+      "providerSymbols": {
+        "finnhub": "LNT"
+      },
+      "name": "Alliant Energy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "2016-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000060667",
+      "symbol": "LOW",
+      "providerSymbols": {
+        "finnhub": "LOW"
+      },
+      "name": "Lowe's",
+      "sector": "Consumer Discretionary",
+      "industry": "Home Improvement Retail",
+      "validFrom": "1984-02-29",
+      "validTo": null
+    },
+    {
+      "cik": "0000707549",
+      "symbol": "LRCX",
+      "providerSymbols": {
+        "finnhub": "LRCX"
+      },
+      "name": "Lam Research",
+      "sector": "Information Technology",
+      "industry": "Semiconductor Materials & Equipment",
+      "validFrom": "2012-06-29",
+      "validTo": null
+    },
+    {
+      "cik": "0001397187",
+      "symbol": "LULU",
+      "providerSymbols": {
+        "finnhub": "LULU"
+      },
+      "name": "Lululemon Athletica",
+      "sector": "Consumer Discretionary",
+      "industry": "Apparel, Accessories & Luxury Goods",
+      "validFrom": "2023-10-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000092380",
+      "symbol": "LUV",
+      "providerSymbols": {
+        "finnhub": "LUV"
+      },
+      "name": "Southwest Airlines",
+      "sector": "Industrials",
+      "industry": "Passenger Airlines",
+      "validFrom": "1994-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001300514",
+      "symbol": "LVS",
+      "providerSymbols": {
+        "finnhub": "LVS"
+      },
+      "name": "Las Vegas Sands",
+      "sector": "Consumer Discretionary",
+      "industry": "Casinos & Gaming",
+      "validFrom": "2019-10-03",
+      "validTo": null
+    },
+    {
+      "cik": "0001489393",
+      "symbol": "LYB",
+      "providerSymbols": {
+        "finnhub": "LYB"
+      },
+      "name": "LyondellBasell",
+      "sector": "Materials",
+      "industry": "Specialty Chemicals",
+      "validFrom": "2012-09-05",
+      "validTo": null
+    },
+    {
+      "cik": "0001335258",
+      "symbol": "LYV",
+      "providerSymbols": {
+        "finnhub": "LYV"
+      },
+      "name": "Live Nation Entertainment",
+      "sector": "Communication Services",
+      "industry": "Movies & Entertainment",
+      "validFrom": "2019-12-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001141391",
+      "symbol": "MA",
+      "providerSymbols": {
+        "finnhub": "MA"
+      },
+      "name": "Mastercard",
+      "sector": "Financials",
+      "industry": "Transaction & Payment Processing Services",
+      "validFrom": "2008-07-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000912595",
+      "symbol": "MAA",
+      "providerSymbols": {
+        "finnhub": "MAA"
+      },
+      "name": "Mid-America Apartment Communities",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "validFrom": "2016-12-02",
+      "validTo": null
+    },
+    {
+      "cik": "0001048286",
+      "symbol": "MAR",
+      "providerSymbols": {
+        "finnhub": "MAR"
+      },
+      "name": "Marriott International",
+      "sector": "Consumer Discretionary",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "validFrom": "1998-05-29",
+      "validTo": null
+    },
+    {
+      "cik": "0000062996",
+      "symbol": "MAS",
+      "providerSymbols": {
+        "finnhub": "MAS"
+      },
+      "name": "Masco",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "validFrom": "1981-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000063908",
+      "symbol": "MCD",
+      "providerSymbols": {
+        "finnhub": "MCD"
+      },
+      "name": "McDonald's",
+      "sector": "Consumer Discretionary",
+      "industry": "Restaurants",
+      "validFrom": "1970-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000827054",
+      "symbol": "MCHP",
+      "providerSymbols": {
+        "finnhub": "MCHP"
+      },
+      "name": "Microchip Technology",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "2007-09-07",
+      "validTo": null
+    },
+    {
+      "cik": "0000927653",
+      "symbol": "MCK",
+      "providerSymbols": {
+        "finnhub": "MCK"
+      },
+      "name": "McKesson Corporation",
+      "sector": "Health Care",
+      "industry": "Health Care Distributors",
+      "validFrom": "1999-01-13",
+      "validTo": null
+    },
+    {
+      "cik": "0001059556",
+      "symbol": "MCO",
+      "providerSymbols": {
+        "finnhub": "MCO"
+      },
+      "name": "Moody's Corporation",
+      "sector": "Financials",
+      "industry": "Financial Exchanges & Data",
+      "validFrom": "1998-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001103982",
+      "symbol": "MDLZ",
+      "providerSymbols": {
+        "finnhub": "MDLZ"
+      },
+      "name": "Mondelez International",
+      "sector": "Consumer Staples",
+      "industry": "Packaged Foods & Meats",
+      "validFrom": "2012-10-02",
+      "validTo": null
+    },
+    {
+      "cik": "0001613103",
+      "symbol": "MDT",
+      "providerSymbols": {
+        "finnhub": "MDT"
+      },
+      "name": "Medtronic",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "1986-10-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001099219",
+      "symbol": "MET",
+      "providerSymbols": {
+        "finnhub": "MET"
+      },
+      "name": "MetLife",
+      "sector": "Financials",
+      "industry": "Life & Health Insurance",
+      "validFrom": "2000-12-11",
+      "validTo": null
+    },
+    {
+      "cik": "0001326801",
+      "symbol": "META",
+      "providerSymbols": {
+        "finnhub": "META"
+      },
+      "name": "Meta Platforms",
+      "sector": "Communication Services",
+      "industry": "Interactive Media & Services",
+      "validFrom": "2013-12-23",
+      "validTo": null
+    },
+    {
+      "cik": "0000789570",
+      "symbol": "MGM",
+      "providerSymbols": {
+        "finnhub": "MGM"
+      },
+      "name": "MGM Resorts",
+      "sector": "Consumer Discretionary",
+      "industry": "Casinos & Gaming",
+      "validFrom": "2017-07-26",
+      "validTo": null
+    },
+    {
+      "cik": "0000063754",
+      "symbol": "MKC",
+      "providerSymbols": {
+        "finnhub": "MKC"
+      },
+      "name": "McCormick & Company",
+      "sector": "Consumer Staples",
+      "industry": "Packaged Foods & Meats",
+      "validFrom": "2003-03-20",
+      "validTo": null
+    },
+    {
+      "cik": "0000916076",
+      "symbol": "MLM",
+      "providerSymbols": {
+        "finnhub": "MLM"
+      },
+      "name": "Martin Marietta Materials",
+      "sector": "Materials",
+      "industry": "Construction Materials",
+      "validFrom": "2014-07-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000066740",
+      "symbol": "MMM",
+      "providerSymbols": {
+        "finnhub": "MMM"
+      },
+      "name": "3M",
+      "sector": "Industrials",
+      "industry": "Industrial Conglomerates",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000865752",
+      "symbol": "MNST",
+      "providerSymbols": {
+        "finnhub": "MNST"
+      },
+      "name": "Monster Beverage",
+      "sector": "Consumer Staples",
+      "industry": "Soft Drinks & Non-alcoholic Beverages",
+      "validFrom": "2012-06-28",
+      "validTo": null
+    },
+    {
+      "cik": "0000764180",
+      "symbol": "MO",
+      "providerSymbols": {
+        "finnhub": "MO"
+      },
+      "name": "Altria",
+      "sector": "Consumer Staples",
+      "industry": "Tobacco",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001285785",
+      "symbol": "MOS",
+      "providerSymbols": {
+        "finnhub": "MOS"
+      },
+      "name": "Mosaic Company (The)",
+      "sector": "Materials",
+      "industry": "Fertilizers & Agricultural Chemicals",
+      "validFrom": "2011-09-26",
+      "validTo": null
+    },
+    {
+      "cik": "0001510295",
+      "symbol": "MPC",
+      "providerSymbols": {
+        "finnhub": "MPC"
+      },
+      "name": "Marathon Petroleum",
+      "sector": "Energy",
+      "industry": "Oil & Gas Refining & Marketing",
+      "validFrom": "2011-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001280452",
+      "symbol": "MPWR",
+      "providerSymbols": {
+        "finnhub": "MPWR"
+      },
+      "name": "Monolithic Power Systems",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "2021-02-12",
+      "validTo": null
+    },
+    {
+      "cik": "0000310158",
+      "symbol": "MRK",
+      "providerSymbols": {
+        "finnhub": "MRK"
+      },
+      "name": "Merck & Co.",
+      "sector": "Health Care",
+      "industry": "Pharmaceuticals",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001682852",
+      "symbol": "MRNA",
+      "providerSymbols": {
+        "finnhub": "MRNA"
+      },
+      "name": "Moderna",
+      "sector": "Health Care",
+      "industry": "Biotechnology",
+      "validFrom": "2021-07-21",
+      "validTo": null
+    },
+    {
+      "cik": "0000062709",
+      "symbol": "MRSH",
+      "providerSymbols": {
+        "finnhub": "MRSH"
+      },
+      "name": "Marsh McLennan",
+      "sector": "Financials",
+      "industry": "Insurance Brokers",
+      "validFrom": "1987-08-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001835632",
+      "symbol": "MRVL",
+      "providerSymbols": {
+        "finnhub": "MRVL"
+      },
+      "name": "Marvell Technology",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "2026-06-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000895421",
+      "symbol": "MS",
+      "providerSymbols": {
+        "finnhub": "MS"
+      },
+      "name": "Morgan Stanley",
+      "sector": "Financials",
+      "industry": "Investment Banking & Brokerage",
+      "validFrom": "1993-07-29",
+      "validTo": null
+    },
+    {
+      "cik": "0001408198",
+      "symbol": "MSCI",
+      "providerSymbols": {
+        "finnhub": "MSCI"
+      },
+      "name": "MSCI Inc.",
+      "sector": "Financials",
+      "industry": "Financial Exchanges & Data",
+      "validFrom": "2018-04-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000789019",
+      "symbol": "MSFT",
+      "providerSymbols": {
+        "finnhub": "MSFT"
+      },
+      "name": "Microsoft",
+      "sector": "Information Technology",
+      "industry": "Systems Software",
+      "validFrom": "1994-06-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000068505",
+      "symbol": "MSI",
+      "providerSymbols": {
+        "finnhub": "MSI"
+      },
+      "name": "Motorola Solutions",
+      "sector": "Information Technology",
+      "industry": "Communications Equipment",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000036270",
+      "symbol": "MTB",
+      "providerSymbols": {
+        "finnhub": "MTB"
+      },
+      "name": "M&T Bank",
+      "sector": "Financials",
+      "industry": "Regional Banks",
+      "validFrom": "2004-02-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001037646",
+      "symbol": "MTD",
+      "providerSymbols": {
+        "finnhub": "MTD"
+      },
+      "name": "Mettler Toledo",
+      "sector": "Health Care",
+      "industry": "Life Sciences Tools & Services",
+      "validFrom": "2016-09-06",
+      "validTo": null
+    },
+    {
+      "cik": "0000723125",
+      "symbol": "MU",
+      "providerSymbols": {
+        "finnhub": "MU"
+      },
+      "name": "Micron Technology",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "1994-09-27",
+      "validTo": null
+    },
+    {
+      "cik": "0001513761",
+      "symbol": "NCLH",
+      "providerSymbols": {
+        "finnhub": "NCLH"
+      },
+      "name": "Norwegian Cruise Line Holdings",
+      "sector": "Consumer Discretionary",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "validFrom": "2017-10-13",
+      "validTo": null
+    },
+    {
+      "cik": "0001120193",
+      "symbol": "NDAQ",
+      "providerSymbols": {
+        "finnhub": "NDAQ"
+      },
+      "name": "Nasdaq, Inc.",
+      "sector": "Financials",
+      "industry": "Financial Exchanges & Data",
+      "validFrom": "2008-10-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000072331",
+      "symbol": "NDSN",
+      "providerSymbols": {
+        "finnhub": "NDSN"
+      },
+      "name": "Nordson Corporation",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "2022-02-15",
+      "validTo": null
+    },
+    {
+      "cik": "0000753308",
+      "symbol": "NEE",
+      "providerSymbols": {
+        "finnhub": "NEE"
+      },
+      "name": "NextEra Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "1976-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001164727",
+      "symbol": "NEM",
+      "providerSymbols": {
+        "finnhub": "NEM"
+      },
+      "name": "Newmont",
+      "sector": "Materials",
+      "industry": "Gold",
+      "validFrom": "1969-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001065280",
+      "symbol": "NFLX",
+      "providerSymbols": {
+        "finnhub": "NFLX"
+      },
+      "name": "Netflix",
+      "sector": "Communication Services",
+      "industry": "Movies & Entertainment",
+      "validFrom": "2010-12-20",
+      "validTo": null
+    },
+    {
+      "cik": "0001111711",
+      "symbol": "NI",
+      "providerSymbols": {
+        "finnhub": "NI"
+      },
+      "name": "NiSource",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "2000-11-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000320187",
+      "symbol": "NKE",
+      "providerSymbols": {
+        "finnhub": "NKE"
+      },
+      "name": "Nike, Inc.",
+      "sector": "Consumer Discretionary",
+      "industry": "Apparel, Accessories & Luxury Goods",
+      "validFrom": "1988-11-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001133421",
+      "symbol": "NOC",
+      "providerSymbols": {
+        "finnhub": "NOC"
+      },
+      "name": "Northrop Grumman",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001373715",
+      "symbol": "NOW",
+      "providerSymbols": {
+        "finnhub": "NOW"
+      },
+      "name": "ServiceNow",
+      "sector": "Information Technology",
+      "industry": "Systems Software",
+      "validFrom": "2019-11-21",
+      "validTo": null
+    },
+    {
+      "cik": "0001013871",
+      "symbol": "NRG",
+      "providerSymbols": {
+        "finnhub": "NRG"
+      },
+      "name": "NRG Energy",
+      "sector": "Utilities",
+      "industry": "Independent Power Producers & Energy Traders",
+      "validFrom": "2010-01-29",
+      "validTo": null
+    },
+    {
+      "cik": "0000702165",
+      "symbol": "NSC",
+      "providerSymbols": {
+        "finnhub": "NSC"
+      },
+      "name": "Norfolk Southern",
+      "sector": "Industrials",
+      "industry": "Rail Transportation",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001002047",
+      "symbol": "NTAP",
+      "providerSymbols": {
+        "finnhub": "NTAP"
+      },
+      "name": "NetApp",
+      "sector": "Information Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "validFrom": "1999-06-25",
+      "validTo": null
+    },
+    {
+      "cik": "0000073124",
+      "symbol": "NTRS",
+      "providerSymbols": {
+        "finnhub": "NTRS"
+      },
+      "name": "Northern Trust",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "1998-01-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000073309",
+      "symbol": "NUE",
+      "providerSymbols": {
+        "finnhub": "NUE"
+      },
+      "name": "Nucor",
+      "sector": "Materials",
+      "industry": "Steel",
+      "validFrom": "1985-04-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001045810",
+      "symbol": "NVDA",
+      "providerSymbols": {
+        "finnhub": "NVDA"
+      },
+      "name": "Nvidia",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "2001-11-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000906163",
+      "symbol": "NVR",
+      "providerSymbols": {
+        "finnhub": "NVR"
+      },
+      "name": "NVR, Inc.",
+      "sector": "Consumer Discretionary",
+      "industry": "Homebuilding",
+      "validFrom": "2019-09-26",
+      "validTo": null
+    },
+    {
+      "cik": "0001564708",
+      "symbol": "NWS",
+      "providerSymbols": {
+        "finnhub": "NWS"
+      },
+      "name": "News Corp (Class B)",
+      "sector": "Communication Services",
+      "industry": "Publishing",
+      "validFrom": "2015-09-18",
+      "validTo": null
+    },
+    {
+      "cik": "0001564708",
+      "symbol": "NWSA",
+      "providerSymbols": {
+        "finnhub": "NWSA"
+      },
+      "name": "News Corp (Class A)",
+      "sector": "Communication Services",
+      "industry": "Publishing",
+      "validFrom": "2013-08-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001413447",
+      "symbol": "NXPI",
+      "providerSymbols": {
+        "finnhub": "NXPI"
+      },
+      "name": "NXP Semiconductors",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "2021-03-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000726728",
+      "symbol": "O",
+      "providerSymbols": {
+        "finnhub": "O"
+      },
+      "name": "Realty Income",
+      "sector": "Real Estate",
+      "industry": "Retail REITs",
+      "validFrom": "2015-04-07",
+      "validTo": null
+    },
+    {
+      "cik": "0000878927",
+      "symbol": "ODFL",
+      "providerSymbols": {
+        "finnhub": "ODFL"
+      },
+      "name": "Old Dominion",
+      "sector": "Industrials",
+      "industry": "Cargo Ground Transportation",
+      "validFrom": "2019-12-09",
+      "validTo": null
+    },
+    {
+      "cik": "0001039684",
+      "symbol": "OKE",
+      "providerSymbols": {
+        "finnhub": "OKE"
+      },
+      "name": "Oneok",
+      "sector": "Energy",
+      "industry": "Oil & Gas Storage & Transportation",
+      "validFrom": "2010-03-15",
+      "validTo": null
+    },
+    {
+      "cik": "0000029989",
+      "symbol": "OMC",
+      "providerSymbols": {
+        "finnhub": "OMC"
+      },
+      "name": "Omnicom Group",
+      "sector": "Communication Services",
+      "industry": "Advertising",
+      "validFrom": "1997-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001097864",
+      "symbol": "ON",
+      "providerSymbols": {
+        "finnhub": "ON"
+      },
+      "name": "ON Semiconductor",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "2022-06-21",
+      "validTo": null
+    },
+    {
+      "cik": "0001341439",
+      "symbol": "ORCL",
+      "providerSymbols": {
+        "finnhub": "ORCL"
+      },
+      "name": "Oracle Corporation",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "1989-08-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000898173",
+      "symbol": "ORLY",
+      "providerSymbols": {
+        "finnhub": "ORLY"
+      },
+      "name": "O’Reilly Automotive",
+      "sector": "Consumer Discretionary",
+      "industry": "Automotive Retail",
+      "validFrom": "2009-03-27",
+      "validTo": null
+    },
+    {
+      "cik": "0001781335",
+      "symbol": "OTIS",
+      "providerSymbols": {
+        "finnhub": "OTIS"
+      },
+      "name": "Otis Worldwide",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "2020-04-03",
+      "validTo": null
+    },
+    {
+      "cik": "0000797468",
+      "symbol": "OXY",
+      "providerSymbols": {
+        "finnhub": "OXY"
+      },
+      "name": "Occidental Petroleum",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001327567",
+      "symbol": "PANW",
+      "providerSymbols": {
+        "finnhub": "PANW"
+      },
+      "name": "Palo Alto Networks",
+      "sector": "Information Technology",
+      "industry": "Systems Software",
+      "validFrom": "2023-06-20",
+      "validTo": null
+    },
+    {
+      "cik": "0000723531",
+      "symbol": "PAYX",
+      "providerSymbols": {
+        "finnhub": "PAYX"
+      },
+      "name": "Paychex",
+      "sector": "Industrials",
+      "industry": "Human Resource & Employment Services",
+      "validFrom": "1998-10-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000075362",
+      "symbol": "PCAR",
+      "providerSymbols": {
+        "finnhub": "PCAR"
+      },
+      "name": "Paccar",
+      "sector": "Industrials",
+      "industry": "Construction Machinery & Heavy Transportation Equipment",
+      "validFrom": "1980-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001004980",
+      "symbol": "PCG",
+      "providerSymbols": {
+        "finnhub": "PCG"
+      },
+      "name": "PG&E Corporation",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "2022-10-03",
+      "validTo": null
+    },
+    {
+      "cik": "0000788784",
+      "symbol": "PEG",
+      "providerSymbols": {
+        "finnhub": "PEG"
+      },
+      "name": "Public Service Enterprise Group",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000077476",
+      "symbol": "PEP",
+      "providerSymbols": {
+        "finnhub": "PEP"
+      },
+      "name": "PepsiCo",
+      "sector": "Consumer Staples",
+      "industry": "Soft Drinks & Non-alcoholic Beverages",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000078003",
+      "symbol": "PFE",
+      "providerSymbols": {
+        "finnhub": "PFE"
+      },
+      "name": "Pfizer",
+      "sector": "Health Care",
+      "industry": "Pharmaceuticals",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001126328",
+      "symbol": "PFG",
+      "providerSymbols": {
+        "finnhub": "PFG"
+      },
+      "name": "Principal Financial Group",
+      "sector": "Financials",
+      "industry": "Life & Health Insurance",
+      "validFrom": "2002-07-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000080424",
+      "symbol": "PG",
+      "providerSymbols": {
+        "finnhub": "PG"
+      },
+      "name": "Procter & Gamble",
+      "sector": "Consumer Staples",
+      "industry": "Personal Care Products",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000080661",
+      "symbol": "PGR",
+      "providerSymbols": {
+        "finnhub": "PGR"
+      },
+      "name": "Progressive Corporation",
+      "sector": "Financials",
+      "industry": "Property & Casualty Insurance",
+      "validFrom": "1997-08-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000076334",
+      "symbol": "PH",
+      "providerSymbols": {
+        "finnhub": "PH"
+      },
+      "name": "Parker Hannifin",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "1985-11-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000822416",
+      "symbol": "PHM",
+      "providerSymbols": {
+        "finnhub": "PHM"
+      },
+      "name": "PulteGroup",
+      "sector": "Consumer Discretionary",
+      "industry": "Homebuilding",
+      "validFrom": "1984-04-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000075677",
+      "symbol": "PKG",
+      "providerSymbols": {
+        "finnhub": "PKG"
+      },
+      "name": "Packaging Corporation of America",
+      "sector": "Materials",
+      "industry": "Paper & Plastic Packaging Products & Materials",
+      "validFrom": "2017-07-26",
+      "validTo": null
+    },
+    {
+      "cik": "0001045609",
+      "symbol": "PLD",
+      "providerSymbols": {
+        "finnhub": "PLD"
+      },
+      "name": "Prologis",
+      "sector": "Real Estate",
+      "industry": "Industrial REITs",
+      "validFrom": "2003-07-17",
+      "validTo": null
+    },
+    {
+      "cik": "0001321655",
+      "symbol": "PLTR",
+      "providerSymbols": {
+        "finnhub": "PLTR"
+      },
+      "name": "Palantir Technologies",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2024-09-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001413329",
+      "symbol": "PM",
+      "providerSymbols": {
+        "finnhub": "PM"
+      },
+      "name": "Philip Morris International",
+      "sector": "Consumer Staples",
+      "industry": "Tobacco",
+      "validFrom": "2008-03-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000713676",
+      "symbol": "PNC",
+      "providerSymbols": {
+        "finnhub": "PNC"
+      },
+      "name": "PNC Financial Services",
+      "sector": "Financials",
+      "industry": "Diversified Banks",
+      "validFrom": "1988-04-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000077360",
+      "symbol": "PNR",
+      "providerSymbols": {
+        "finnhub": "PNR"
+      },
+      "name": "Pentair",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "2012-10-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000764622",
+      "symbol": "PNW",
+      "providerSymbols": {
+        "finnhub": "PNW"
+      },
+      "name": "Pinnacle West Capital",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "1999-10-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001145197",
+      "symbol": "PODD",
+      "providerSymbols": {
+        "finnhub": "PODD"
+      },
+      "name": "Insulet Corporation",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "2023-03-15",
+      "validTo": null
+    },
+    {
+      "cik": "0000079879",
+      "symbol": "PPG",
+      "providerSymbols": {
+        "finnhub": "PPG"
+      },
+      "name": "PPG Industries",
+      "sector": "Materials",
+      "industry": "Specialty Chemicals",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000922224",
+      "symbol": "PPL",
+      "providerSymbols": {
+        "finnhub": "PPL"
+      },
+      "name": "PPL Corporation",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "2001-10-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001137774",
+      "symbol": "PRU",
+      "providerSymbols": {
+        "finnhub": "PRU"
+      },
+      "name": "Prudential Financial",
+      "sector": "Financials",
+      "industry": "Life & Health Insurance",
+      "validFrom": "2002-07-22",
+      "validTo": null
+    },
+    {
+      "cik": "0001393311",
+      "symbol": "PSA",
+      "providerSymbols": {
+        "finnhub": "PSA"
+      },
+      "name": "Public Storage",
+      "sector": "Real Estate",
+      "industry": "Self-Storage REITs",
+      "validFrom": "2005-08-19",
+      "validTo": null
+    },
+    {
+      "cik": "0002041610",
+      "symbol": "PSKY",
+      "providerSymbols": {
+        "finnhub": "PSKY"
+      },
+      "name": "Paramount Skydance Corporation",
+      "sector": "Communication Services",
+      "industry": "Movies & Entertainment",
+      "validFrom": "1994-09-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001534701",
+      "symbol": "PSX",
+      "providerSymbols": {
+        "finnhub": "PSX"
+      },
+      "name": "Phillips 66",
+      "sector": "Energy",
+      "industry": "Oil & Gas Refining & Marketing",
+      "validFrom": "2012-05-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000857005",
+      "symbol": "PTC",
+      "providerSymbols": {
+        "finnhub": "PTC"
+      },
+      "name": "PTC Inc.",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2021-04-20",
+      "validTo": null
+    },
+    {
+      "cik": "0001050915",
+      "symbol": "PWR",
+      "providerSymbols": {
+        "finnhub": "PWR"
+      },
+      "name": "Quanta Services",
+      "sector": "Industrials",
+      "industry": "Construction & Engineering",
+      "validFrom": "2009-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001633917",
+      "symbol": "PYPL",
+      "providerSymbols": {
+        "finnhub": "PYPL"
+      },
+      "name": "PayPal",
+      "sector": "Financials",
+      "industry": "Transaction & Payment Processing Services",
+      "validFrom": "2015-07-20",
+      "validTo": null
+    },
+    {
+      "cik": "0002058873",
+      "symbol": "Q",
+      "providerSymbols": {
+        "finnhub": "Q"
+      },
+      "name": "Qnity Electronics",
+      "sector": "Information Technology",
+      "industry": "Semiconductor Materials & Equipment",
+      "validFrom": "2025-11-03",
+      "validTo": null
+    },
+    {
+      "cik": "0000804328",
+      "symbol": "QCOM",
+      "providerSymbols": {
+        "finnhub": "QCOM"
+      },
+      "name": "Qualcomm",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "1999-07-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000884887",
+      "symbol": "RCL",
+      "providerSymbols": {
+        "finnhub": "RCL"
+      },
+      "name": "Royal Caribbean Group",
+      "sector": "Consumer Discretionary",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "validFrom": "2014-12-05",
+      "validTo": null
+    },
+    {
+      "cik": "0000910606",
+      "symbol": "REG",
+      "providerSymbols": {
+        "finnhub": "REG"
+      },
+      "name": "Regency Centers",
+      "sector": "Real Estate",
+      "industry": "Retail REITs",
+      "validFrom": "2017-03-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000872589",
+      "symbol": "REGN",
+      "providerSymbols": {
+        "finnhub": "REGN"
+      },
+      "name": "Regeneron Pharmaceuticals",
+      "sector": "Health Care",
+      "industry": "Biotechnology",
+      "validFrom": "2013-05-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001281761",
+      "symbol": "RF",
+      "providerSymbols": {
+        "finnhub": "RF"
+      },
+      "name": "Regions Financial Corporation",
+      "sector": "Financials",
+      "industry": "Regional Banks",
+      "validFrom": "1998-08-28",
+      "validTo": null
+    },
+    {
+      "cik": "0000720005",
+      "symbol": "RJF",
+      "providerSymbols": {
+        "finnhub": "RJF"
+      },
+      "name": "Raymond James Financial",
+      "sector": "Financials",
+      "industry": "Investment Banking & Brokerage",
+      "validFrom": "2017-03-20",
+      "validTo": null
+    },
+    {
+      "cik": "0001037038",
+      "symbol": "RL",
+      "providerSymbols": {
+        "finnhub": "RL"
+      },
+      "name": "Ralph Lauren Corporation",
+      "sector": "Consumer Discretionary",
+      "industry": "Apparel, Accessories & Luxury Goods",
+      "validFrom": "2007-02-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000943819",
+      "symbol": "RMD",
+      "providerSymbols": {
+        "finnhub": "RMD"
+      },
+      "name": "ResMed",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "2017-07-26",
+      "validTo": null
+    },
+    {
+      "cik": "0001024478",
+      "symbol": "ROK",
+      "providerSymbols": {
+        "finnhub": "ROK"
+      },
+      "name": "Rockwell Automation",
+      "sector": "Industrials",
+      "industry": "Electrical Components & Equipment",
+      "validFrom": "2000-03-12",
+      "validTo": null
+    },
+    {
+      "cik": "0000084839",
+      "symbol": "ROL",
+      "providerSymbols": {
+        "finnhub": "ROL"
+      },
+      "name": "Rollins, Inc.",
+      "sector": "Industrials",
+      "industry": "Environmental & Facilities Services",
+      "validFrom": "2018-10-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000882835",
+      "symbol": "ROP",
+      "providerSymbols": {
+        "finnhub": "ROP"
+      },
+      "name": "Roper Technologies",
+      "sector": "Information Technology",
+      "industry": "Electronic Equipment & Instruments",
+      "validFrom": "2009-12-23",
+      "validTo": null
+    },
+    {
+      "cik": "0000745732",
+      "symbol": "ROST",
+      "providerSymbols": {
+        "finnhub": "ROST"
+      },
+      "name": "Ross Stores",
+      "sector": "Consumer Discretionary",
+      "industry": "Apparel Retail",
+      "validFrom": "2009-12-21",
+      "validTo": null
+    },
+    {
+      "cik": "0001060391",
+      "symbol": "RSG",
+      "providerSymbols": {
+        "finnhub": "RSG"
+      },
+      "name": "Republic Services",
+      "sector": "Industrials",
+      "industry": "Environmental & Facilities Services",
+      "validFrom": "2008-12-05",
+      "validTo": null
+    },
+    {
+      "cik": "0000101829",
+      "symbol": "RTX",
+      "providerSymbols": {
+        "finnhub": "RTX"
+      },
+      "name": "RTX Corporation",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000031791",
+      "symbol": "RVTY",
+      "providerSymbols": {
+        "finnhub": "RVTY"
+      },
+      "name": "Revvity",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "1985-05-31",
+      "validTo": null
+    },
+    {
+      "cik": "0001034054",
+      "symbol": "SBAC",
+      "providerSymbols": {
+        "finnhub": "SBAC"
+      },
+      "name": "SBA Communications",
+      "sector": "Real Estate",
+      "industry": "Telecom Tower REITs",
+      "validFrom": "2017-09-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000829224",
+      "symbol": "SBUX",
+      "providerSymbols": {
+        "finnhub": "SBUX"
+      },
+      "name": "Starbucks",
+      "sector": "Consumer Discretionary",
+      "industry": "Restaurants",
+      "validFrom": "2000-06-07",
+      "validTo": null
+    },
+    {
+      "cik": "0000316709",
+      "symbol": "SCHW",
+      "providerSymbols": {
+        "finnhub": "SCHW"
+      },
+      "name": "Charles Schwab Corporation",
+      "sector": "Financials",
+      "industry": "Investment Banking & Brokerage",
+      "validFrom": "1997-06-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000089800",
+      "symbol": "SHW",
+      "providerSymbols": {
+        "finnhub": "SHW"
+      },
+      "name": "Sherwin-Williams",
+      "sector": "Materials",
+      "industry": "Specialty Chemicals",
+      "validFrom": "1964-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000091419",
+      "symbol": "SJM",
+      "providerSymbols": {
+        "finnhub": "SJM"
+      },
+      "name": "J.M. Smucker Company (The)",
+      "sector": "Consumer Staples",
+      "industry": "Packaged Foods & Meats",
+      "validFrom": "2008-11-06",
+      "validTo": null
+    },
+    {
+      "cik": "0000087347",
+      "symbol": "SLB",
+      "providerSymbols": {
+        "finnhub": "SLB"
+      },
+      "name": "Schlumberger",
+      "sector": "Energy",
+      "industry": "Oil & Gas Equipment & Services",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001375365",
+      "symbol": "SMCI",
+      "providerSymbols": {
+        "finnhub": "SMCI"
+      },
+      "name": "Supermicro",
+      "sector": "Information Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "validFrom": "2024-03-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000091440",
+      "symbol": "SNA",
+      "providerSymbols": {
+        "finnhub": "SNA"
+      },
+      "name": "Snap-on",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "1982-09-30",
+      "validTo": null
+    },
+    {
+      "cik": "0002023554",
+      "symbol": "SNDK",
+      "providerSymbols": {
+        "finnhub": "SNDK"
+      },
+      "name": "Sandisk",
+      "sector": "Information Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "validFrom": "2025-11-28",
+      "validTo": null
+    },
+    {
+      "cik": "0000883241",
+      "symbol": "SNPS",
+      "providerSymbols": {
+        "finnhub": "SNPS"
+      },
+      "name": "Synopsys",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2017-03-16",
+      "validTo": null
+    },
+    {
+      "cik": "0000092122",
+      "symbol": "SO",
+      "providerSymbols": {
+        "finnhub": "SO"
+      },
+      "name": "Southern Company",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001964738",
+      "symbol": "SOLV",
+      "providerSymbols": {
+        "finnhub": "SOLV"
+      },
+      "name": "Solventum",
+      "sector": "Health Care",
+      "industry": "Health Care Technology",
+      "validFrom": "2024-04-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001063761",
+      "symbol": "SPG",
+      "providerSymbols": {
+        "finnhub": "SPG"
+      },
+      "name": "Simon Property Group",
+      "sector": "Real Estate",
+      "industry": "Retail REITs",
+      "validFrom": "2002-06-26",
+      "validTo": null
+    },
+    {
+      "cik": "0000064040",
+      "symbol": "SPGI",
+      "providerSymbols": {
+        "finnhub": "SPGI"
+      },
+      "name": "S&P Global",
+      "sector": "Financials",
+      "industry": "Financial Exchanges & Data",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001032208",
+      "symbol": "SRE",
+      "providerSymbols": {
+        "finnhub": "SRE"
+      },
+      "name": "Sempra",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "2017-03-17",
+      "validTo": null
+    },
+    {
+      "cik": "0001757898",
+      "symbol": "STE",
+      "providerSymbols": {
+        "finnhub": "STE"
+      },
+      "name": "Steris",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "2019-12-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001022671",
+      "symbol": "STLD",
+      "providerSymbols": {
+        "finnhub": "STLD"
+      },
+      "name": "Steel Dynamics",
+      "sector": "Materials",
+      "industry": "Steel",
+      "validFrom": "2022-12-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000093751",
+      "symbol": "STT",
+      "providerSymbols": {
+        "finnhub": "STT"
+      },
+      "name": "State Street Corporation",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "2003-03-14",
+      "validTo": null
+    },
+    {
+      "cik": "0001137789",
+      "symbol": "STX",
+      "providerSymbols": {
+        "finnhub": "STX"
+      },
+      "name": "Seagate Technology",
+      "sector": "Information Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "validFrom": "2012-07-02",
+      "validTo": null
+    },
+    {
+      "cik": "0000016918",
+      "symbol": "STZ",
+      "providerSymbols": {
+        "finnhub": "STZ"
+      },
+      "name": "Constellation Brands",
+      "sector": "Consumer Staples",
+      "industry": "Distillers & Vintners",
+      "validFrom": "2005-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0002005951",
+      "symbol": "SW",
+      "providerSymbols": {
+        "finnhub": "SW"
+      },
+      "name": "Smurfit Westrock",
+      "sector": "Materials",
+      "industry": "Paper & Plastic Packaging Products & Materials",
+      "validFrom": "2024-07-08",
+      "validTo": null
+    },
+    {
+      "cik": "0000093556",
+      "symbol": "SWK",
+      "providerSymbols": {
+        "finnhub": "SWK"
+      },
+      "name": "Stanley Black & Decker",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "1982-09-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000004127",
+      "symbol": "SWKS",
+      "providerSymbols": {
+        "finnhub": "SWKS"
+      },
+      "name": "Skyworks Solutions",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "2015-03-12",
+      "validTo": null
+    },
+    {
+      "cik": "0001601712",
+      "symbol": "SYF",
+      "providerSymbols": {
+        "finnhub": "SYF"
+      },
+      "name": "Synchrony Financial",
+      "sector": "Financials",
+      "industry": "Consumer Finance",
+      "validFrom": "2015-11-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000310764",
+      "symbol": "SYK",
+      "providerSymbols": {
+        "finnhub": "SYK"
+      },
+      "name": "Stryker Corporation",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "2000-12-12",
+      "validTo": null
+    },
+    {
+      "cik": "0000096021",
+      "symbol": "SYY",
+      "providerSymbols": {
+        "finnhub": "SYY"
+      },
+      "name": "Sysco",
+      "sector": "Consumer Staples",
+      "industry": "Food Distributors",
+      "validFrom": "1986-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000732717",
+      "symbol": "T",
+      "providerSymbols": {
+        "finnhub": "T"
+      },
+      "name": "AT&T",
+      "sector": "Communication Services",
+      "industry": "Integrated Telecommunication Services",
+      "validFrom": "1983-11-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000024545",
+      "symbol": "TAP",
+      "providerSymbols": {
+        "finnhub": "TAP"
+      },
+      "name": "Molson Coors Beverage Company",
+      "sector": "Consumer Staples",
+      "industry": "Brewers",
+      "validFrom": "1976-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001260221",
+      "symbol": "TDG",
+      "providerSymbols": {
+        "finnhub": "TDG"
+      },
+      "name": "TransDigm Group",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "2016-06-03",
+      "validTo": null
+    },
+    {
+      "cik": "0001094285",
+      "symbol": "TDY",
+      "providerSymbols": {
+        "finnhub": "TDY"
+      },
+      "name": "Teledyne Technologies",
+      "sector": "Information Technology",
+      "industry": "Electronic Equipment & Instruments",
+      "validFrom": "2020-06-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000842023",
+      "symbol": "TECH",
+      "providerSymbols": {
+        "finnhub": "TECH"
+      },
+      "name": "Bio-Techne",
+      "sector": "Health Care",
+      "industry": "Life Sciences Tools & Services",
+      "validFrom": "2021-08-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001385157",
+      "symbol": "TEL",
+      "providerSymbols": {
+        "finnhub": "TEL"
+      },
+      "name": "TE Connectivity",
+      "sector": "Information Technology",
+      "industry": "Electronic Manufacturing Services",
+      "validFrom": "2011-10-17",
+      "validTo": null
+    },
+    {
+      "cik": "0000097210",
+      "symbol": "TER",
+      "providerSymbols": {
+        "finnhub": "TER"
+      },
+      "name": "Teradyne",
+      "sector": "Information Technology",
+      "industry": "Semiconductor Materials & Equipment",
+      "validFrom": "2020-09-21",
+      "validTo": null
+    },
+    {
+      "cik": "0000092230",
+      "symbol": "TFC",
+      "providerSymbols": {
+        "finnhub": "TFC"
+      },
+      "name": "Truist Financial",
+      "sector": "Financials",
+      "industry": "Diversified Banks",
+      "validFrom": "1997-12-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000027419",
+      "symbol": "TGT",
+      "providerSymbols": {
+        "finnhub": "TGT"
+      },
+      "name": "Target Corporation",
+      "sector": "Consumer Staples",
+      "industry": "Consumer Staples Merchandise Retail",
+      "validFrom": "1976-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000109198",
+      "symbol": "TJX",
+      "providerSymbols": {
+        "finnhub": "TJX"
+      },
+      "name": "TJX Companies",
+      "sector": "Consumer Discretionary",
+      "industry": "Apparel Retail",
+      "validFrom": "1985-09-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001973266",
+      "symbol": "TKO",
+      "providerSymbols": {
+        "finnhub": "TKO"
+      },
+      "name": "TKO Group Holdings",
+      "sector": "Communication Services",
+      "industry": "Movies & Entertainment",
+      "validFrom": "2025-03-24",
+      "validTo": null
+    },
+    {
+      "cik": "0000097745",
+      "symbol": "TMO",
+      "providerSymbols": {
+        "finnhub": "TMO"
+      },
+      "name": "Thermo Fisher Scientific",
+      "sector": "Health Care",
+      "industry": "Life Sciences Tools & Services",
+      "validFrom": "2004-08-03",
+      "validTo": null
+    },
+    {
+      "cik": "0001283699",
+      "symbol": "TMUS",
+      "providerSymbols": {
+        "finnhub": "TMUS"
+      },
+      "name": "T-Mobile US",
+      "sector": "Communication Services",
+      "industry": "Wireless Telecommunication Services",
+      "validFrom": "2019-07-15",
+      "validTo": null
+    },
+    {
+      "cik": "0001811074",
+      "symbol": "TPL",
+      "providerSymbols": {
+        "finnhub": "TPL"
+      },
+      "name": "Texas Pacific Land Corporation",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "validFrom": "2024-11-26",
+      "validTo": null
+    },
+    {
+      "cik": "0001116132",
+      "symbol": "TPR",
+      "providerSymbols": {
+        "finnhub": "TPR"
+      },
+      "name": "Tapestry, Inc.",
+      "sector": "Consumer Discretionary",
+      "industry": "Apparel, Accessories & Luxury Goods",
+      "validFrom": "2004-09-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001389170",
+      "symbol": "TRGP",
+      "providerSymbols": {
+        "finnhub": "TRGP"
+      },
+      "name": "Targa Resources",
+      "sector": "Energy",
+      "industry": "Oil & Gas Storage & Transportation",
+      "validFrom": "2022-10-12",
+      "validTo": null
+    },
+    {
+      "cik": "0000864749",
+      "symbol": "TRMB",
+      "providerSymbols": {
+        "finnhub": "TRMB"
+      },
+      "name": "Trimble Inc.",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2021-01-21",
+      "validTo": null
+    },
+    {
+      "cik": "0001113169",
+      "symbol": "TROW",
+      "providerSymbols": {
+        "finnhub": "TROW"
+      },
+      "name": "T. Rowe Price",
+      "sector": "Financials",
+      "industry": "Asset Management & Custody Banks",
+      "validFrom": "2019-07-29",
+      "validTo": null
+    },
+    {
+      "cik": "0000086312",
+      "symbol": "TRV",
+      "providerSymbols": {
+        "finnhub": "TRV"
+      },
+      "name": "Travelers Companies (The)",
+      "sector": "Financials",
+      "industry": "Property & Casualty Insurance",
+      "validFrom": "2002-08-21",
+      "validTo": null
+    },
+    {
+      "cik": "0000916365",
+      "symbol": "TSCO",
+      "providerSymbols": {
+        "finnhub": "TSCO"
+      },
+      "name": "Tractor Supply",
+      "sector": "Consumer Discretionary",
+      "industry": "Other Specialty Retail",
+      "validFrom": "2014-01-24",
+      "validTo": null
+    },
+    {
+      "cik": "0001318605",
+      "symbol": "TSLA",
+      "providerSymbols": {
+        "finnhub": "TSLA"
+      },
+      "name": "Tesla, Inc.",
+      "sector": "Consumer Discretionary",
+      "industry": "Automobile Manufacturers",
+      "validFrom": "2020-12-21",
+      "validTo": null
+    },
+    {
+      "cik": "0000100493",
+      "symbol": "TSN",
+      "providerSymbols": {
+        "finnhub": "TSN"
+      },
+      "name": "Tyson Foods",
+      "sector": "Consumer Staples",
+      "industry": "Packaged Foods & Meats",
+      "validFrom": "2005-08-10",
+      "validTo": null
+    },
+    {
+      "cik": "0001466258",
+      "symbol": "TT",
+      "providerSymbols": {
+        "finnhub": "TT"
+      },
+      "name": "Trane Technologies",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "validFrom": "2010-11-17",
+      "validTo": null
+    },
+    {
+      "cik": "0001671933",
+      "symbol": "TTD",
+      "providerSymbols": {
+        "finnhub": "TTD"
+      },
+      "name": "Trade Desk (The)",
+      "sector": "Communication Services",
+      "industry": "Advertising",
+      "validFrom": "2025-07-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000946581",
+      "symbol": "TTWO",
+      "providerSymbols": {
+        "finnhub": "TTWO"
+      },
+      "name": "Take-Two Interactive",
+      "sector": "Communication Services",
+      "industry": "Interactive Home Entertainment",
+      "validFrom": "2018-03-19",
+      "validTo": null
+    },
+    {
+      "cik": "0000097476",
+      "symbol": "TXN",
+      "providerSymbols": {
+        "finnhub": "TXN"
+      },
+      "name": "Texas Instruments",
+      "sector": "Information Technology",
+      "industry": "Semiconductors",
+      "validFrom": "2001-03-12",
+      "validTo": null
+    },
+    {
+      "cik": "0000217346",
+      "symbol": "TXT",
+      "providerSymbols": {
+        "finnhub": "TXT"
+      },
+      "name": "Textron",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "validFrom": "1978-12-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000860731",
+      "symbol": "TYL",
+      "providerSymbols": {
+        "finnhub": "TYL"
+      },
+      "name": "Tyler Technologies",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2020-06-22",
+      "validTo": null
+    },
+    {
+      "cik": "0000100517",
+      "symbol": "UAL",
+      "providerSymbols": {
+        "finnhub": "UAL"
+      },
+      "name": "United Airlines Holdings",
+      "sector": "Industrials",
+      "industry": "Passenger Airlines",
+      "validFrom": "2015-09-03",
+      "validTo": null
+    },
+    {
+      "cik": "0001543151",
+      "symbol": "UBER",
+      "providerSymbols": {
+        "finnhub": "UBER"
+      },
+      "name": "Uber",
+      "sector": "Industrials",
+      "industry": "Passenger Ground Transportation",
+      "validFrom": "2023-12-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000074208",
+      "symbol": "UDR",
+      "providerSymbols": {
+        "finnhub": "UDR"
+      },
+      "name": "UDR, Inc.",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "validFrom": "2016-03-07",
+      "validTo": null
+    },
+    {
+      "cik": "0000352915",
+      "symbol": "UHS",
+      "providerSymbols": {
+        "finnhub": "UHS"
+      },
+      "name": "Universal Health Services",
+      "sector": "Health Care",
+      "industry": "Health Care Facilities",
+      "validFrom": "2014-09-20",
+      "validTo": null
+    },
+    {
+      "cik": "0001403568",
+      "symbol": "ULTA",
+      "providerSymbols": {
+        "finnhub": "ULTA"
+      },
+      "name": "Ulta Beauty",
+      "sector": "Consumer Discretionary",
+      "industry": "Other Specialty Retail",
+      "validFrom": "2016-04-18",
+      "validTo": null
+    },
+    {
+      "cik": "0000731766",
+      "symbol": "UNH",
+      "providerSymbols": {
+        "finnhub": "UNH"
+      },
+      "name": "UnitedHealth Group",
+      "sector": "Health Care",
+      "industry": "Managed Health Care",
+      "validFrom": "1994-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000100885",
+      "symbol": "UNP",
+      "providerSymbols": {
+        "finnhub": "UNP"
+      },
+      "name": "Union Pacific Corporation",
+      "sector": "Industrials",
+      "industry": "Rail Transportation",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001090727",
+      "symbol": "UPS",
+      "providerSymbols": {
+        "finnhub": "UPS"
+      },
+      "name": "United Parcel Service",
+      "sector": "Industrials",
+      "industry": "Air Freight & Logistics",
+      "validFrom": "2002-07-22",
+      "validTo": null
+    },
+    {
+      "cik": "0001067701",
+      "symbol": "URI",
+      "providerSymbols": {
+        "finnhub": "URI"
+      },
+      "name": "United Rentals",
+      "sector": "Industrials",
+      "industry": "Trading Companies & Distributors",
+      "validFrom": "2014-09-20",
+      "validTo": null
+    },
+    {
+      "cik": "0000036104",
+      "symbol": "USB",
+      "providerSymbols": {
+        "finnhub": "USB"
+      },
+      "name": "U.S. Bancorp",
+      "sector": "Financials",
+      "industry": "Diversified Banks",
+      "validFrom": "1999-11-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001403161",
+      "symbol": "V",
+      "providerSymbols": {
+        "finnhub": "V"
+      },
+      "name": "Visa Inc.",
+      "sector": "Financials",
+      "industry": "Transaction & Payment Processing Services",
+      "validFrom": "2009-12-21",
+      "validTo": null
+    },
+    {
+      "cik": "0001393052",
+      "symbol": "VEEV",
+      "providerSymbols": {
+        "finnhub": "VEEV"
+      },
+      "name": "Veeva Systems",
+      "sector": "Health Care",
+      "industry": "Health Care Technology",
+      "validFrom": "2026-05-07",
+      "validTo": null
+    },
+    {
+      "cik": "0001705696",
+      "symbol": "VICI",
+      "providerSymbols": {
+        "finnhub": "VICI"
+      },
+      "name": "Vici Properties",
+      "sector": "Real Estate",
+      "industry": "Hotel & Resort REITs",
+      "validFrom": "2022-06-08",
+      "validTo": null
+    },
+    {
+      "cik": "0001035002",
+      "symbol": "VLO",
+      "providerSymbols": {
+        "finnhub": "VLO"
+      },
+      "name": "Valero Energy",
+      "sector": "Energy",
+      "industry": "Oil & Gas Refining & Marketing",
+      "validFrom": "2002-12-20",
+      "validTo": null
+    },
+    {
+      "cik": "0001967680",
+      "symbol": "VLTO",
+      "providerSymbols": {
+        "finnhub": "VLTO"
+      },
+      "name": "Veralto",
+      "sector": "Industrials",
+      "industry": "Environmental & Facilities Services",
+      "validFrom": "2023-10-02",
+      "validTo": null
+    },
+    {
+      "cik": "0001396009",
+      "symbol": "VMC",
+      "providerSymbols": {
+        "finnhub": "VMC"
+      },
+      "name": "Vulcan Materials Company",
+      "sector": "Materials",
+      "industry": "Construction Materials",
+      "validFrom": "1999-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0001442145",
+      "symbol": "VRSK",
+      "providerSymbols": {
+        "finnhub": "VRSK"
+      },
+      "name": "Verisk Analytics",
+      "sector": "Industrials",
+      "industry": "Research & Consulting Services",
+      "validFrom": "2015-10-08",
+      "validTo": null
+    },
+    {
+      "cik": "0001014473",
+      "symbol": "VRSN",
+      "providerSymbols": {
+        "finnhub": "VRSN"
+      },
+      "name": "Verisign",
+      "sector": "Information Technology",
+      "industry": "Internet Services & Infrastructure",
+      "validFrom": "2006-02-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001674101",
+      "symbol": "VRT",
+      "providerSymbols": {
+        "finnhub": "VRT"
+      },
+      "name": "Vertiv",
+      "sector": "Industrials",
+      "industry": "Electrical Components & Equipment",
+      "validFrom": "2026-03-23",
+      "validTo": null
+    },
+    {
+      "cik": "0000875320",
+      "symbol": "VRTX",
+      "providerSymbols": {
+        "finnhub": "VRTX"
+      },
+      "name": "Vertex Pharmaceuticals",
+      "sector": "Health Care",
+      "industry": "Biotechnology",
+      "validFrom": "2013-09-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001692819",
+      "symbol": "VST",
+      "providerSymbols": {
+        "finnhub": "VST"
+      },
+      "name": "Vistra Corp.",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "2024-05-08",
+      "validTo": null
+    },
+    {
+      "cik": "0000740260",
+      "symbol": "VTR",
+      "providerSymbols": {
+        "finnhub": "VTR"
+      },
+      "name": "Ventas",
+      "sector": "Real Estate",
+      "industry": "Health Care REITs",
+      "validFrom": "2009-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001792044",
+      "symbol": "VTRS",
+      "providerSymbols": {
+        "finnhub": "VTRS"
+      },
+      "name": "Viatris",
+      "sector": "Health Care",
+      "industry": "Pharmaceuticals",
+      "validFrom": "2004-04-23",
+      "validTo": null
+    },
+    {
+      "cik": "0000732712",
+      "symbol": "VZ",
+      "providerSymbols": {
+        "finnhub": "VZ"
+      },
+      "name": "Verizon",
+      "sector": "Communication Services",
+      "industry": "Integrated Telecommunication Services",
+      "validFrom": "1983-11-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000943452",
+      "symbol": "WAB",
+      "providerSymbols": {
+        "finnhub": "WAB"
+      },
+      "name": "Wabtec",
+      "sector": "Industrials",
+      "industry": "Construction Machinery & Heavy Transportation Equipment",
+      "validFrom": "2019-02-27",
+      "validTo": null
+    },
+    {
+      "cik": "0001000697",
+      "symbol": "WAT",
+      "providerSymbols": {
+        "finnhub": "WAT"
+      },
+      "name": "Waters Corporation",
+      "sector": "Health Care",
+      "industry": "Life Sciences Tools & Services",
+      "validFrom": "2002-01-02",
+      "validTo": null
+    },
+    {
+      "cik": "0001437107",
+      "symbol": "WBD",
+      "providerSymbols": {
+        "finnhub": "WBD"
+      },
+      "name": "Warner Bros. Discovery",
+      "sector": "Communication Services",
+      "industry": "Broadcasting",
+      "validFrom": "2022-04-11",
+      "validTo": null
+    },
+    {
+      "cik": "0001327811",
+      "symbol": "WDAY",
+      "providerSymbols": {
+        "finnhub": "WDAY"
+      },
+      "name": "Workday, Inc.",
+      "sector": "Information Technology",
+      "industry": "Application Software",
+      "validFrom": "2024-12-23",
+      "validTo": null
+    },
+    {
+      "cik": "0000106040",
+      "symbol": "WDC",
+      "providerSymbols": {
+        "finnhub": "WDC"
+      },
+      "name": "Western Digital",
+      "sector": "Information Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "validFrom": "2009-07-01",
+      "validTo": null
+    },
+    {
+      "cik": "0000783325",
+      "symbol": "WEC",
+      "providerSymbols": {
+        "finnhub": "WEC"
+      },
+      "name": "WEC Energy Group",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "validFrom": "2008-10-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000766704",
+      "symbol": "WELL",
+      "providerSymbols": {
+        "finnhub": "WELL"
+      },
+      "name": "Welltower",
+      "sector": "Real Estate",
+      "industry": "Health Care REITs",
+      "validFrom": "2009-01-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000072971",
+      "symbol": "WFC",
+      "providerSymbols": {
+        "finnhub": "WFC"
+      },
+      "name": "Wells Fargo",
+      "sector": "Financials",
+      "industry": "Diversified Banks",
+      "validFrom": "1976-06-30",
+      "validTo": null
+    },
+    {
+      "cik": "0000823768",
+      "symbol": "WM",
+      "providerSymbols": {
+        "finnhub": "WM"
+      },
+      "name": "Waste Management",
+      "sector": "Industrials",
+      "industry": "Environmental & Facilities Services",
+      "validFrom": "1998-08-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000107263",
+      "symbol": "WMB",
+      "providerSymbols": {
+        "finnhub": "WMB"
+      },
+      "name": "Williams Companies",
+      "sector": "Energy",
+      "industry": "Oil & Gas Storage & Transportation",
+      "validFrom": "1975-03-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000104169",
+      "symbol": "WMT",
+      "providerSymbols": {
+        "finnhub": "WMT"
+      },
+      "name": "Walmart",
+      "sector": "Consumer Staples",
+      "industry": "Consumer Staples Merchandise Retail",
+      "validFrom": "1982-08-31",
+      "validTo": null
+    },
+    {
+      "cik": "0000011544",
+      "symbol": "WRB",
+      "providerSymbols": {
+        "finnhub": "WRB"
+      },
+      "name": "W. R. Berkley Corporation",
+      "sector": "Financials",
+      "industry": "Property & Casualty Insurance",
+      "validFrom": "2019-12-05",
+      "validTo": null
+    },
+    {
+      "cik": "0000719955",
+      "symbol": "WSM",
+      "providerSymbols": {
+        "finnhub": "WSM"
+      },
+      "name": "Williams-Sonoma, Inc.",
+      "sector": "Consumer Discretionary",
+      "industry": "Homefurnishing Retail",
+      "validFrom": "2025-03-24",
+      "validTo": null
+    },
+    {
+      "cik": "0000105770",
+      "symbol": "WST",
+      "providerSymbols": {
+        "finnhub": "WST"
+      },
+      "name": "West Pharmaceutical Services",
+      "sector": "Health Care",
+      "industry": "Health Care Supplies",
+      "validFrom": "2020-05-22",
+      "validTo": null
+    },
+    {
+      "cik": "0001140536",
+      "symbol": "WTW",
+      "providerSymbols": {
+        "finnhub": "WTW"
+      },
+      "name": "Willis Towers Watson",
+      "sector": "Financials",
+      "industry": "Insurance Brokers",
+      "validFrom": "2016-01-05",
+      "validTo": null
+    },
+    {
+      "cik": "0000106535",
+      "symbol": "WY",
+      "providerSymbols": {
+        "finnhub": "WY"
+      },
+      "name": "Weyerhaeuser",
+      "sector": "Real Estate",
+      "industry": "Timber REITs",
+      "validFrom": "1979-10-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001174922",
+      "symbol": "WYNN",
+      "providerSymbols": {
+        "finnhub": "WYNN"
+      },
+      "name": "Wynn Resorts",
+      "sector": "Consumer Discretionary",
+      "industry": "Casinos & Gaming",
+      "validFrom": "2008-11-14",
+      "validTo": null
+    },
+    {
+      "cik": "0000072903",
+      "symbol": "XEL",
+      "providerSymbols": {
+        "finnhub": "XEL"
+      },
+      "name": "Xcel Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0000034088",
+      "symbol": "XOM",
+      "providerSymbols": {
+        "finnhub": "XOM"
+      },
+      "name": "ExxonMobil",
+      "sector": "Energy",
+      "industry": "Integrated Oil & Gas",
+      "validFrom": "1957-03-04",
+      "validTo": null
+    },
+    {
+      "cik": "0001524472",
+      "symbol": "XYL",
+      "providerSymbols": {
+        "finnhub": "XYL"
+      },
+      "name": "Xylem Inc.",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "validFrom": "2011-11-01",
+      "validTo": null
+    },
+    {
+      "cik": "0001512673",
+      "symbol": "XYZ",
+      "providerSymbols": {
+        "finnhub": "XYZ"
+      },
+      "name": "Block, Inc.",
+      "sector": "Financials",
+      "industry": "Transaction & Payment Processing Services",
+      "validFrom": "2025-07-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001041061",
+      "symbol": "YUM",
+      "providerSymbols": {
+        "finnhub": "YUM"
+      },
+      "name": "Yum! Brands",
+      "sector": "Consumer Discretionary",
+      "industry": "Restaurants",
+      "validFrom": "1997-10-06",
+      "validTo": null
+    },
+    {
+      "cik": "0001136869",
+      "symbol": "ZBH",
+      "providerSymbols": {
+        "finnhub": "ZBH"
+      },
+      "name": "Zimmer Biomet",
+      "sector": "Health Care",
+      "industry": "Health Care Equipment",
+      "validFrom": "2001-08-07",
+      "validTo": null
+    },
+    {
+      "cik": "0000877212",
+      "symbol": "ZBRA",
+      "providerSymbols": {
+        "finnhub": "ZBRA"
+      },
+      "name": "Zebra Technologies",
+      "sector": "Information Technology",
+      "industry": "Electronic Equipment & Instruments",
+      "validFrom": "2019-12-23",
+      "validTo": null
+    },
+    {
+      "cik": "0001555280",
+      "symbol": "ZTS",
+      "providerSymbols": {
+        "finnhub": "ZTS"
+      },
+      "name": "Zoetis",
+      "sector": "Health Care",
+      "industry": "Pharmaceuticals",
+      "validFrom": "2013-06-21",
+      "validTo": null
+    }
+  ]
+}

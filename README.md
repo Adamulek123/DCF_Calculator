@@ -93,7 +93,53 @@ At startup, `123.py` decodes this value, initializes Firebase Admin, and creates
 
 Never commit the JSON credential, its decoded private key, or the environment-variable value.
 
-### 4. Run the API
+### 4. Configure the earnings calendar
+
+The earnings-calendar refresh is isolated in `earnings_calendar.py`. It requests Finnhub in seven-day windows so the provider's capped response cannot silently omit the earlier part of the four-month coverage range. It requires two server-only environment variables:
+
+```text
+FINNHUB_API_KEY=<Finnhub API token>
+EARNINGS_REFRESH_SECRET=<long random scheduler secret>
+```
+
+On Render, these values are read only from environment variables. For local
+development, copy the safe template and put your real values in the ignored
+file:
+
+```powershell
+Copy-Item local_secrets.example.json local_secrets.json
+```
+
+```json
+{
+  "FINNHUB_API_KEY": "your-real-finnhub-key",
+  "EARNINGS_REFRESH_SECRET": "choose-any-long-random-local-secret"
+}
+```
+
+`local_secrets.json` is ignored by Git. Non-Render processes prefer its values;
+if the file is absent, local environment variables remain supported. Render
+never reads the local file, even if one is accidentally present in its working
+directory. Do not put either secret in frontend files.
+
+When using the workspace-root `start_backend.bat`, this setup is guided on its
+first run: the launcher creates the ignored file, generates the local refresh
+secret, and opens the file so you only need to paste the Finnhub key. It then
+starts all local services, waits for Flask, and calls the refresh endpoint.
+Later runs require only starting the batch file; a fresh cached calendar does
+not cause an extra Finnhub provider request.
+
+It also requires a reviewed `sp500_companies.json` snapshot with top-level `metadata` and `companies` fields. Each company supplies its CIK, display symbol, Finnhub alias, name, sector, and membership validity dates. Missing or invalid constituent data disables refreshes without preventing the Flask application or an existing cached calendar from being served. Never expose either secret to the browser or commit it to this repository.
+
+Generate or review the snapshot independently from the earnings refresh:
+
+```bash
+python scripts/update_sp500_companies.py
+```
+
+The updater reads Wikipedia through the Wikimedia API, validates the table shape and a plausible constituent count, retains Finnhub's documented dot-form share-class symbol (for example `BRK.B`), accepts the hyphen variant as a compatibility alias, and records the source page revision and CC BY-SA attribution in the generated file. Review the diff before deployment; a failed update leaves the previous snapshot untouched.
+
+### 5. Run the API
 
 ```bash
 python 123.py
@@ -121,6 +167,20 @@ curl http://localhost:5000/
 
 It should return `Running`.
 
+To populate the local Firestore emulator from Finnhub, use the same local
+refresh secret from `local_secrets.json`:
+
+```powershell
+$headers = @{ Authorization = "Bearer choose-any-long-random-local-secret" }
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:5000/internal/earnings-calendar/refresh `
+  -Headers $headers
+```
+
+Then serve the sibling frontend and open
+`http://localhost:8000/earnings-calendar.html`. Subsequent refresh calls made
+before `refreshAfter` return `fresh` without consuming another Finnhub request.
+
 ## Authentication
 
 Feature routes expect a Firebase ID token in the request header:
@@ -137,7 +197,7 @@ Local direct execution configures Auth and Firestore emulators automatically. Fo
 
 ## API
 
-Except for `/`, all current routes require a bearer token.
+User-owned and account feature routes require a Firebase bearer token. The health route and earnings-calendar read routes are public; the internal earnings refresh uses its own scheduler secret.
 
 ### Health and ticker data
 
@@ -145,6 +205,38 @@ Except for `/`, all current routes require a bearer token.
 | --- | --- | --- | --- |
 | `GET` | `/` | default | Health check; returns `Running` |
 | `GET` | `/get_tickers` | default | Returns the in-memory contents of `all_exchanges_clean.json` |
+
+### Earnings calendar
+
+| Method | Route | Rate limit | Description |
+| --- | --- | --- | --- |
+| `GET` | `/earnings-calendar/manifest` | 120/minute | Public freshness, coverage, and per-week revision metadata |
+| `GET` | `/earnings-calendar/weeks?start=YYYY-MM-DD&count=1&revision=<datasetRevision>` | 120/minute | Public lightweight Monday-Sunday calendar summaries; count is 1-6 and revision prevents stale snapshot reuse |
+| `GET` | `/earnings-calendar/weeks/<weekStart>/events/<eventId>/estimates?revision=<weekRevision>` | 120/minute | Public fiscal-period, EPS, and revenue estimates for one selected calendar event |
+| `POST` | `/internal/earnings-calendar/refresh` | 12/hour | Secret-protected Finnhub refresh and changed-only Firestore publish |
+
+The weekly response intentionally excludes `fiscalYear`, `fiscalQuarter`,
+`epsEstimate`, and `revenueEstimate`. A refresh stores those fields in a
+parallel weekly estimate document and the browser requests one event only when
+its details drawer is opened. The read routes support `If-None-Match` and return
+revalidation-oriented cache headers. They return `503` with
+`Retry-After: 300` when no successful cache is available; the calendar frontend
+intentionally does not apply the generic GET retry loop to these responses. The
+refresh route returns `fresh` without contacting Finnhub while `refreshAfter`
+is in the future, and returns `refresh_in_progress` for overlapping calls.
+
+Deploy and refresh the backend before publishing a frontend that expects the
+estimate endpoint. Ingestion schema upgrades force every advertised week to be
+rewritten even when the provider data itself is unchanged.
+
+Configure cron-job.org to make the following call every four hours. Use its test-run feature once after the backend deployment to seed Firestore, confirm that the public manifest contains events, and only then deploy the frontend navigation:
+
+```http
+POST https://dcf-backend.onrender.com/internal/earnings-calendar/refresh
+Authorization: Bearer <EARNINGS_REFRESH_SECRET>
+```
+
+Use HTTPS, keep the secret in the request header, disable response-body retention where practical, and enable failure/recovery notifications. A real refresh failure returns a non-2xx response.
 
 ### Market and financial data
 
@@ -322,6 +414,8 @@ Runtime:       Python
 Build command: pip install -r requirements.txt
 Start command: gunicorn 123:app
 Environment:   FIREBASE_SERVICE_ACCOUNT_KEY_BASE64=<secret>
+               FINNHUB_API_KEY=<secret>
+               EARNINGS_REFRESH_SECRET=<secret>
 ```
 
 Render supplies `PORT`; do not hard-code a production port. The rate limiter currently uses in-memory storage, so limits and caches are process-local and reset when the service restarts.
