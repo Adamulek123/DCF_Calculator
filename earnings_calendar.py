@@ -48,6 +48,9 @@ CIK_RE = re.compile(r"^\d{10}$")
 REFRESH_INTERVAL = dt.timedelta(hours=4)
 LEASE_DURATION = dt.timedelta(minutes=10)
 FINNHUB_WINDOW_DAYS = 7
+FINNHUB_CONNECT_TIMEOUT_SECONDS = 5
+FINNHUB_READ_TIMEOUT_SECONDS = 10
+PROVIDER_REFRESH_DEADLINE_SECONDS = 8 * 60
 INGESTION_VERSION = 3
 MIN_INITIAL_MATCHED_EVENTS = 25
 MIN_MATCHED_RAW_RATIO = 0.02
@@ -303,6 +306,7 @@ def fetch_finnhub_calendar(api_key, coverage_start, coverage_end, http_get=reque
         raise CalendarUnavailable("FINNHUB_API_KEY is not configured.")
     all_events = []
     cursor = coverage_start
+    deadline = time.monotonic() + PROVIDER_REFRESH_DEADLINE_SECONDS
     while cursor <= coverage_end:
         window_end = min(coverage_end, cursor + dt.timedelta(days=FINNHUB_WINDOW_DAYS - 1))
         params = {
@@ -313,8 +317,17 @@ def fetch_finnhub_calendar(api_key, coverage_start, coverage_end, http_get=reque
         }
         last_error = None
         for attempt in range(2):
+            remaining = deadline - time.monotonic()
+            if remaining <= 1:
+                raise ProviderError("Finnhub refresh exceeded its safe execution deadline.")
+            connect_timeout = min(FINNHUB_CONNECT_TIMEOUT_SECONDS, max(0.5, remaining / 3))
+            read_timeout = min(FINNHUB_READ_TIMEOUT_SECONDS, max(0.5, remaining - connect_timeout))
             try:
-                response = http_get(FINNHUB_CALENDAR_URL, params=params, timeout=(5, 25))
+                response = http_get(
+                    FINNHUB_CALENDAR_URL,
+                    params=params,
+                    timeout=(connect_timeout, read_timeout),
+                )
             except requests.RequestException as exc:
                 last_error = exc
                 if attempt == 0:
