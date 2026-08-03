@@ -17,6 +17,7 @@ import os
 import random
 import re
 import time
+import types
 import uuid
 from collections import defaultdict
 from pathlib import Path
@@ -35,12 +36,14 @@ from earnings_market_caps import (
     boundary_issuer_ids,
     build_refresh_queue,
     failure_record,
+    frontend_lane,
     group_active_issuers,
     issuer_for_event,
     normalize_profile,
     provider_reservation_delay,
     public_event_sort,
     reconcile_snapshot,
+    select_refresh_queue,
     snapshot_content_revision,
 )
 
@@ -80,7 +83,9 @@ DEFAULT_PROVIDER_REQUESTS_PER_MINUTE = 45
 DEFAULT_PROFILE_MAX_PER_RUN = 25
 DEFAULT_EXECUTION_MAX_SECONDS = 720
 PUBLICATION_RESERVE_SECONDS = 75
-MAX_MARKET_CAP_SNAPSHOT_JSON_BYTES = 900_000
+MAX_MARKET_CAP_SNAPSHOT_JSON_BYTES = 650_000
+SCHEDULED_REFRESH_TOLERANCE = dt.timedelta(minutes=30)
+MIN_PUBLICATION_SECONDS = 5.0
 INGESTION_VERSION = 4
 MIN_INITIAL_MATCHED_EVENTS = 25
 MIN_MATCHED_RAW_RATIO = 0.02
@@ -141,6 +146,10 @@ class ProviderBudgetExhausted(ProviderError):
 class ProviderRateLimited(ProviderError):
     code = "provider_rate_limited"
 
+    def __init__(self, message, retry_after=None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
 
 class LeaseLost(CalendarUnavailable):
     code = "refresh_lease_lost"
@@ -148,6 +157,14 @@ class LeaseLost(CalendarUnavailable):
 
 class SnapshotConflict(CalendarUnavailable):
     code = "market_cap_generation_conflict"
+
+
+class ExecutionDeadlineExceeded(CalendarUnavailable):
+    code = "execution_deadline_exceeded"
+
+
+class HistoricalSnapshotInvalid(CalendarUnavailable):
+    code = "historical_snapshot_invalid"
 
 
 def _positive_int_environment(name, default, maximum=None):
@@ -297,6 +314,27 @@ def _validate_snapshot_size(snapshot):
     if size > MAX_MARKET_CAP_SNAPSHOT_JSON_BYTES:
         raise CalendarUnavailable("The market-cap snapshot is too large to publish safely.")
     return size
+
+
+def _remaining_execution_seconds(deadline):
+    return float("inf") if deadline is None else deadline - time.monotonic()
+
+
+def _require_execution_time(deadline, phase, minimum_seconds=0.0):
+    remaining = _remaining_execution_seconds(deadline)
+    if remaining <= minimum_seconds:
+        raise ExecutionDeadlineExceeded(
+            f"The earnings-calendar execution deadline was reached before {phase}."
+        )
+    return remaining
+
+
+def _is_fresh_for_caller(manifest, now, manual):
+    refresh_after = _parse_datetime((manifest or {}).get("refreshAfter"))
+    if not refresh_after or int((manifest or {}).get("ingestionVersion") or 0) < INGESTION_VERSION:
+        return False
+    tolerance = dt.timedelta(0) if manual else SCHEDULED_REFRESH_TOLERANCE
+    return refresh_after > now + tolerance
 
 
 def _manifest_overdue(manifest, now=None):
@@ -545,8 +583,58 @@ class PersistentProviderLimiter:
         seconds = max(0.0, float(seconds or 0))
         if not seconds:
             return
+        now = _utc_now()
+        requested_until = now + dt.timedelta(seconds=seconds)
         ref = self.db.collection(META_COLLECTION).document(RATE_STATE_DOCUMENT)
-        ref.set({"blockedUntil": _iso_utc(_utc_now() + dt.timedelta(seconds=seconds))}, merge=True)
+        transaction = self.db.transaction()
+
+        @firestore.transactional
+        def defer_block(tx):
+            state = _document_dict(ref.get(transaction=tx)) or {}
+            current_until = _parse_datetime(state.get("blockedUntil"))
+            blocked_until = max(filter(None, (current_until, requested_until)))
+            tx.set(ref, {
+                **state,
+                "blockedUntil": _iso_utc(blocked_until),
+                "updatedAt": _iso_utc(now),
+            })
+
+        defer_block(transaction)
+
+    def observe_response(self, headers):
+        """Persist provider quota observations without relaxing local limits."""
+        normalized = {str(key).lower(): value for key, value in (headers or {}).items()}
+        remaining_raw = normalized.get("x-ratelimit-remaining", normalized.get("ratelimit-remaining"))
+        reset_raw = normalized.get("x-ratelimit-reset", normalized.get("ratelimit-reset"))
+        try:
+            remaining = int(str(remaining_raw).strip())
+            if remaining < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            remaining = None
+        reset_at = _provider_reset_datetime(reset_raw)
+        if remaining is None and reset_at is None:
+            return
+
+        now = _utc_now()
+        ref = self.db.collection(META_COLLECTION).document(RATE_STATE_DOCUMENT)
+        transaction = self.db.transaction()
+
+        @firestore.transactional
+        def observe(tx):
+            state = _document_dict(ref.get(transaction=tx)) or {}
+            blocked_until = _parse_datetime(state.get("blockedUntil"))
+            if remaining == 0 and reset_at and reset_at > now:
+                blocked_until = max(filter(None, (blocked_until, reset_at)))
+            tx.set(ref, {
+                **state,
+                "providerRemaining": remaining,
+                "providerResetAt": _iso_utc(reset_at) if reset_at else None,
+                "blockedUntil": _iso_utc(blocked_until) if blocked_until and blocked_until > now else None,
+                "providerHeadersObservedAt": _iso_utc(now),
+            })
+
+        observe(transaction)
 
     def remaining_before_deadline(self):
         usable = self.deadline - time.monotonic() - (
@@ -578,6 +666,26 @@ def _response_retry_after(response, now=None):
             parsed = parsed.replace(tzinfo=dt.timezone.utc)
         reference = now or _utc_now()
         return max(0.0, (parsed.astimezone(dt.timezone.utc) - reference).total_seconds())
+
+
+def _provider_reset_datetime(raw, now=None):
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    reference = now or _utc_now()
+    try:
+        value = float(text)
+        timestamp = value if value > 1_000_000_000 else reference.timestamp() + value
+        parsed = dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc)
+    except (ValueError, TypeError, OverflowError, OSError):
+        try:
+            parsed = parsedate_to_datetime(text)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        parsed = parsed.astimezone(dt.timezone.utc)
+    return parsed if parsed > reference else None
 
 
 def _provider_retry_delay(attempt):
@@ -630,10 +738,13 @@ def fetch_finnhub_calendar(
                     time.sleep(_provider_retry_delay(attempt))
                     continue
                 raise ProviderError("Finnhub could not be reached.") from exc
+            if limiter:
+                limiter.observe_response(response.headers)
             if response.status_code == 429:
+                retry_after = _response_retry_after(response) or None
                 if limiter:
-                    limiter.defer(_response_retry_after(response) or 60)
-                raise ProviderRateLimited("calendar_rate_limited")
+                    limiter.defer(retry_after or 60)
+                raise ProviderRateLimited("calendar_rate_limited", retry_after=retry_after)
             if response.status_code >= 500 and attempt == 0:
                 time.sleep(_provider_retry_delay(attempt))
                 continue
@@ -656,7 +767,13 @@ def fetch_finnhub_calendar(
     return {"earningsCalendar": all_events}
 
 
-def fetch_finnhub_profile(api_key, issuer, limiter, http_get=requests.get):
+def fetch_finnhub_profile(
+    api_key,
+    issuer,
+    limiter,
+    http_get=requests.get,
+    default_retry_after=60,
+):
     """Fetch one reviewed issuer profile; one invocation is one provider attempt."""
     if not api_key:
         raise CalendarUnavailable("FINNHUB_API_KEY is not configured.")
@@ -670,9 +787,11 @@ def fetch_finnhub_profile(api_key, issuer, limiter, http_get=requests.get):
         )
     except requests.RequestException as exc:
         raise ProviderError("profile_network_error") from exc
+    limiter.observe_response(response.headers)
     if response.status_code == 429:
-        limiter.defer(_response_retry_after(response) or 60)
-        raise ProviderRateLimited("profile_rate_limited")
+        retry_after = _response_retry_after(response) or None
+        limiter.defer(retry_after or default_retry_after)
+        raise ProviderRateLimited("profile_rate_limited", retry_after=retry_after)
     if response.status_code >= 500:
         raise ProviderError("profile_server_error")
     if response.status_code != 200:
@@ -971,8 +1090,8 @@ def _get_market_cap_snapshot(db):
     return _document_dict(db.collection(META_COLLECTION).document(MARKET_CAP_DOCUMENT).get()) or {}
 
 
-def _get_week_documents(db, week_keys):
-    refs = [db.collection(WEEK_COLLECTION).document(key) for key in sorted(set(week_keys))]
+def _get_documents(db, collection_name, document_keys):
+    refs = [db.collection(collection_name).document(key) for key in sorted(set(document_keys))]
     if not refs:
         return {}
     return {
@@ -980,6 +1099,64 @@ def _get_week_documents(db, week_keys):
         for snapshot in db.get_all(refs)
         if getattr(snapshot, "exists", False)
     }
+
+
+def _get_week_documents(db, week_keys):
+    return _get_documents(db, WEEK_COLLECTION, week_keys)
+
+
+def _validate_historical_documents(
+    previous_manifest,
+    week_documents,
+    estimate_documents,
+    retained_week_keys,
+    market_today,
+):
+    """Fail closed when frozen order cannot be proven from published documents."""
+    manifest_weeks = (previous_manifest or {}).get("weeks") or {}
+    for week_key in sorted(set(retained_week_keys)):
+        try:
+            week_start = dt.date.fromisoformat(week_key)
+        except (TypeError, ValueError) as exc:
+            raise HistoricalSnapshotInvalid("The published manifest contains an invalid week.") from exc
+        if week_start + dt.timedelta(days=6) >= market_today:
+            continue
+        manifest_entry = manifest_weeks.get(week_key)
+        document = week_documents.get(week_key)
+        estimates = estimate_documents.get(week_key)
+        revision = manifest_entry.get("revision") if isinstance(manifest_entry, dict) else None
+        if (
+            not revision
+            or not isinstance(document, dict)
+            or not isinstance(estimates, dict)
+            or document.get("weekRevision") != revision
+            or estimates.get("weekRevision") != revision
+            or document.get("weekStart") != week_key
+            or estimates.get("weekStart") != week_key
+            or not isinstance(document.get("events"), list)
+            or not isinstance(estimates.get("estimates"), dict)
+        ):
+            raise HistoricalSnapshotInvalid(
+                f"Published historical week {week_key} is missing or revision-inconsistent."
+            )
+
+        seen_orders = set()
+        for event in document["events"]:
+            if not isinstance(event, dict):
+                raise HistoricalSnapshotInvalid(f"Published historical week {week_key} is malformed.")
+            order = event.get("displayOrder")
+            identity = (event.get("reportDate"), frontend_lane(event.get("session")), order)
+            if (
+                not isinstance(event.get("eventId"), str)
+                or not isinstance(order, int)
+                or isinstance(order, bool)
+                or order < 1
+                or identity in seen_orders
+            ):
+                raise HistoricalSnapshotInvalid(
+                    f"Published historical week {week_key} has invalid frozen ordering."
+                )
+            seen_orders.add(identity)
 
 
 def checkpoint_market_cap_snapshot(db, owner, snapshot, expected_storage_generation, now=None):
@@ -1025,26 +1202,108 @@ def _publish_if_lease_owned(
     manifest,
     market_cap_snapshot,
     expected_storage_generation,
+    execution_deadline=None,
 ):
+    remaining = _require_execution_time(
+        execution_deadline, "publication", MIN_PUBLICATION_SECONDS
+    )
     _validate_snapshot_size(market_cap_snapshot)
     lease_ref = db.collection(META_COLLECTION).document(LEASE_DOCUMENT)
     snapshot_ref = db.collection(META_COLLECTION).document(MARKET_CAP_DOCUMENT)
-    transaction = db.transaction()
+    max_attempts = 3 if execution_deadline is None else max(
+        1, min(3, int(remaining // MIN_PUBLICATION_SECONDS))
+    )
+    try:
+        transaction = db.transaction(max_attempts=max_attempts)
+    except TypeError:
+        transaction = db.transaction()
+
+    if execution_deadline is not None and hasattr(transaction, "_client"):
+        original_begin = transaction._begin
+        original_commit = transaction._commit
+        original_rollback = transaction._rollback
+
+        def bounded_begin(tx, retry_id=None):
+            if tx.in_progress:
+                return original_begin(retry_id)
+            timeout = max(0.001, _require_execution_time(execution_deadline, "transaction begin"))
+            response = tx._client._firestore_api.begin_transaction(
+                request={
+                    "database": tx._client._database_string,
+                    "options": tx._options_protobuf(retry_id),
+                },
+                metadata=tx._client._rpc_metadata,
+                timeout=timeout,
+            )
+            tx._id = response.transaction
+
+        def bounded_commit(tx):
+            if not tx.in_progress:
+                return original_commit()
+            timeout = max(0.001, _require_execution_time(execution_deadline, "transaction commit"))
+            response = tx._client._firestore_api.commit(
+                request={
+                    "database": tx._client._database_string,
+                    "writes": tx._write_pbs,
+                    "transaction": tx._id,
+                },
+                metadata=tx._client._rpc_metadata,
+                timeout=timeout,
+            )
+            tx._clean_up()
+            tx.write_results = list(response.write_results)
+            tx.commit_time = response.commit_time
+            return tx.write_results
+
+        def bounded_rollback(tx):
+            if not tx.in_progress:
+                return original_rollback()
+            remaining = _remaining_execution_seconds(execution_deadline)
+            if remaining <= 0:
+                tx._clean_up()
+                return None
+            try:
+                tx._client._firestore_api.rollback(
+                    request={
+                        "database": tx._client._database_string,
+                        "transaction": tx._id,
+                    },
+                    metadata=tx._client._rpc_metadata,
+                    timeout=max(0.001, remaining),
+                )
+            finally:
+                tx._clean_up()
+
+        transaction._begin = types.MethodType(bounded_begin, transaction)
+        transaction._commit = types.MethodType(bounded_commit, transaction)
+        transaction._rollback = types.MethodType(bounded_rollback, transaction)
+
+    def transaction_get(ref, tx):
+        if execution_deadline is None:
+            return ref.get(transaction=tx)
+        timeout = max(0.001, _require_execution_time(execution_deadline, "publication read"))
+        try:
+            return ref.get(transaction=tx, timeout=timeout)
+        except TypeError:
+            return ref.get(transaction=tx)
 
     @firestore.transactional
     def publish(tx):
-        current = _document_dict(lease_ref.get(transaction=tx)) or {}
+        _require_execution_time(execution_deadline, "publication transaction")
+        current = _document_dict(transaction_get(lease_ref, tx)) or {}
         expires_at = _parse_datetime(current.get("expiresAt"))
         if current.get("owner") != owner or not expires_at or expires_at <= lease_check_time:
             raise CalendarUnavailable("The earnings-calendar refresh lease was lost before publish.")
-        current_snapshot = _document_dict(snapshot_ref.get(transaction=tx)) or {}
+        current_snapshot = _document_dict(transaction_get(snapshot_ref, tx)) or {}
         current_generation = max(0, int(current_snapshot.get("storageGeneration") or 0))
         if current_generation != expected_storage_generation:
             raise SnapshotConflict("The market-cap snapshot changed during refresh.")
         for week_key in changed_keys:
+            _require_execution_time(execution_deadline, "publication writes")
             tx.set(db.collection(WEEK_COLLECTION).document(week_key), documents[week_key])
             tx.set(db.collection(ESTIMATE_WEEK_COLLECTION).document(week_key), estimate_documents[week_key])
         for week_key in expired_keys:
+            _require_execution_time(execution_deadline, "publication deletes")
             tx.delete(db.collection(WEEK_COLLECTION).document(week_key))
             tx.delete(db.collection(ESTIMATE_WEEK_COLLECTION).document(week_key))
         tx.set(db.collection(META_COLLECTION).document(META_DOCUMENT), manifest)
@@ -1052,6 +1311,7 @@ def _publish_if_lease_owned(
         tx.delete(lease_ref)
 
     publish(transaction)
+    _require_execution_time(execution_deadline, "publication completion")
 
 
 def refresh_earnings_calendar(
@@ -1082,12 +1342,13 @@ def refresh_earnings_calendar(
 
     previous_manifest = _get_manifest(db) or {}
     refresh_after = _parse_datetime(previous_manifest.get("refreshAfter"))
-    if (
-        refresh_after
-        and refresh_after > now
-        and int(previous_manifest.get("ingestionVersion") or 0) >= INGESTION_VERSION
-    ):
-        return {"status": "fresh", "refreshAfter": _iso_utc(refresh_after)}
+    if _is_fresh_for_caller(previous_manifest, now, manual):
+        return {
+            "status": "fresh",
+            "providerChecked": False,
+            "checkedAt": _iso_utc(previous_manifest.get("checkedAt")),
+            "refreshAfter": _iso_utc(refresh_after),
+        }
 
     owner = uuid.uuid4().hex
     if not _acquire_lease(db, owner, now):
@@ -1100,12 +1361,13 @@ def refresh_earnings_calendar(
         # used to derive revisions and the refresh sequence.
         previous_manifest = _get_manifest(db) or {}
         refresh_after = _parse_datetime(previous_manifest.get("refreshAfter"))
-        if (
-            refresh_after
-            and refresh_after > now
-            and int(previous_manifest.get("ingestionVersion") or 0) >= INGESTION_VERSION
-        ):
-            return {"status": "fresh", "refreshAfter": _iso_utc(refresh_after)}
+        if _is_fresh_for_caller(previous_manifest, now, manual):
+            return {
+                "status": "fresh",
+                "providerChecked": False,
+                "checkedAt": _iso_utc(previous_manifest.get("checkedAt")),
+                "refreshAfter": _iso_utc(refresh_after),
+            }
         lease_renewals = 0
 
         def renew_lease():
@@ -1132,6 +1394,20 @@ def refresh_earnings_calendar(
         coverage_start, coverage_end = coverage_window(now, config["futureCoverageDays"])
         previous_week_keys = set((previous_manifest.get("weeks") or {}).keys())
         previous_documents = _get_week_documents(db, previous_week_keys)
+        previous_estimate_documents = _get_documents(
+            db, ESTIMATE_WEEK_COLLECTION, previous_week_keys
+        )
+        retained_week_keys = previous_week_keys.intersection(
+            week.isoformat() for week in _iter_week_starts(coverage_start, coverage_end)
+        )
+        _validate_historical_documents(
+            previous_manifest,
+            previous_documents,
+            previous_estimate_documents,
+            retained_week_keys,
+            market_today,
+        )
+        _require_execution_time(execution_deadline, "provider work", publication_reserve)
         previous_snapshot = _get_market_cap_snapshot(db)
         expected_storage_generation = max(0, int(previous_snapshot.get("storageGeneration") or 0))
         limiter = PersistentProviderLimiter(
@@ -1209,7 +1485,8 @@ def refresh_earnings_calendar(
         profile_updated = 0
         profile_failed = 0
         stop_profiles = False
-        for item in profile_queue[:profile_budget]:
+        selected_profile_queue = select_refresh_queue(profile_queue, profile_budget)
+        for item in selected_profile_queue:
             if stop_profiles or time.monotonic() + 1 >= provider_deadline:
                 break
             issuer_id = item["issuerId"]
@@ -1269,6 +1546,7 @@ def refresh_earnings_calendar(
         for queued in remaining_queue:
             due_remaining_by_tier[tier_labels[queued["priority"]]] += 1
 
+        _require_execution_time(execution_deadline, "document construction", MIN_PUBLICATION_SECONDS)
         built = build_week_documents(
             events,
             coverage_start,
@@ -1306,6 +1584,7 @@ def refresh_earnings_calendar(
             "weeks": built["manifestWeeks"],
         }
 
+        _require_execution_time(execution_deadline, "lease renewal", MIN_PUBLICATION_SECONDS)
         renew_lease()
         lease_check_time = now if explicit_now else _utc_now()
         _publish_if_lease_owned(
@@ -1319,6 +1598,7 @@ def refresh_earnings_calendar(
             manifest,
             candidate_snapshot,
             expected_storage_generation,
+            execution_deadline,
         )
         lease_released = True
         unchanged_count = len(built["documents"]) - len(built["changedKeys"])
@@ -1350,6 +1630,8 @@ def refresh_earnings_calendar(
         )
         return {
             "status": "updated" if dataset_changed else "unchanged",
+            "providerChecked": True,
+            "checkedAt": manifest["checkedAt"],
             "changedWeeks": len(built["changedKeys"]),
             "unchangedWeeks": unchanged_count,
             "expiredWeeks": len(expired_keys),

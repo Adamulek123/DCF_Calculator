@@ -161,6 +161,8 @@ def normalize_profile(profile, issuer, retrieved_at):
     return {
         "symbol": issuer["symbol"],
         "providerSymbol": returned_symbol,
+        "primaryProviderSymbol": issuer["primaryProviderSymbol"],
+        "requestedProviderSymbol": issuer["primaryProviderSymbol"],
         "providerSymbols": issuer["providerSymbols"],
         "constituentSymbols": issuer["constituentSymbols"],
         "marketCapMillions": market_cap_millions,
@@ -204,6 +206,7 @@ def failure_record(previous, issuer, attempted_at, error_code):
     record.update({
         "symbol": issuer["symbol"],
         "providerSymbol": successful_provider_symbol or issuer["primaryProviderSymbol"],
+        "primaryProviderSymbol": issuer["primaryProviderSymbol"],
         "requestedProviderSymbol": issuer["primaryProviderSymbol"],
         "providerSymbols": issuer["providerSymbols"],
         "constituentSymbols": issuer["constituentSymbols"],
@@ -225,7 +228,11 @@ def snapshot_content_revision(snapshot):
             {
                 "issuerId": issuer_id,
                 "symbol": record.get("symbol"),
-                "providerSymbol": record.get("providerSymbol"),
+                "primaryProviderSymbol": (
+                    record.get("primaryProviderSymbol")
+                    or record.get("requestedProviderSymbol")
+                    or record.get("providerSymbol")
+                ),
                 "marketCapMillions": record.get("marketCapMillions"),
                 "marketCapScale": record.get("marketCapScale"),
                 "source": record.get("source"),
@@ -245,9 +252,14 @@ def reconcile_snapshot(previous, current_issuers, constituent_version, retained_
     records = {}
     for issuer_id, issuer in current_issuers.items():
         record = dict(old_records.get(issuer_id) or {})
+        successful_provider_symbol = record.get("providerSymbol") if _valid_market_cap(
+            record.get("marketCapMillions")
+        ) else None
         record.update({
             "symbol": issuer["symbol"],
-            "providerSymbol": issuer["primaryProviderSymbol"],
+            "providerSymbol": successful_provider_symbol or issuer["primaryProviderSymbol"],
+            "primaryProviderSymbol": issuer["primaryProviderSymbol"],
+            "requestedProviderSymbol": issuer["primaryProviderSymbol"],
             "providerSymbols": issuer["providerSymbols"],
             "constituentSymbols": issuer["constituentSymbols"],
         })
@@ -350,6 +362,10 @@ def build_refresh_queue(snapshot, current_issuers, events, market_today, now, fu
             "boundaryBoost": 0 if missing or issuer_id in boundary_ids else 1,
             "retrievedAt": retrieved,
             "lastAttemptAt": last_attempt,
+            "maximumAgeOverdueBySeconds": (
+                max(0.0, (now - (retrieved + max_age)).total_seconds())
+                if not missing and retrieved else 0.0
+            ),
         })
 
     minimum = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
@@ -361,6 +377,22 @@ def build_refresh_queue(snapshot, current_issuers, events, market_today, now, fu
         item["issuer"]["symbol"],
     ))
     return queue
+
+
+def select_refresh_queue(queue, budget, overdue_fraction=0.1):
+    """Reserve bounded capacity for the oldest maximum-age-overdue issuers."""
+    budget = max(0, min(int(budget), len(queue)))
+    if budget == 0:
+        return []
+    overdue = sorted(
+        (item for item in queue if item.get("maximumAgeOverdueBySeconds", 0) > 0),
+        key=lambda item: (-item["maximumAgeOverdueBySeconds"], item["issuer"]["symbol"]),
+    )
+    reserved_count = min(len(overdue), max(1, math.ceil(budget * overdue_fraction)))
+    reserved = overdue[:reserved_count]
+    reserved_ids = {item["issuerId"] for item in reserved}
+    regular = [item for item in queue if item["issuerId"] not in reserved_ids]
+    return reserved + regular[:budget - reserved_count]
 
 
 def boundary_issuer_ids(events, snapshot, market_today):

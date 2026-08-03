@@ -105,6 +105,23 @@ class EarningsCalendarBuildTests(unittest.TestCase):
         self.assertIn('EARNINGS_EXECUTION_MAX_SECONDS: "720"', workflow)
         self.assertIn("scripts/notify_earnings_heartbeat.py", workflow)
         self.assertIn("secrets.EARNINGS_HEARTBEAT_URL", workflow)
+        self.assertIn("steps.refresh.outputs.provider_checked == 'true'", workflow)
+
+    def test_scheduled_refresh_tolerance_prevents_delayed_cron_skip(self):
+        manifest = {
+            "ingestionVersion": earnings_calendar.INGESTION_VERSION,
+            "refreshAfter": "2026-08-03T04:30:00Z",
+        }
+        scheduled_at = dt.datetime(2026, 8, 3, 4, 20, tzinfo=dt.timezone.utc)
+        self.assertFalse(earnings_calendar._is_fresh_for_caller(manifest, scheduled_at, False))
+        self.assertTrue(earnings_calendar._is_fresh_for_caller(manifest, scheduled_at, True))
+
+    def test_snapshot_json_guard_uses_firestore_safety_margin(self):
+        limit = earnings_calendar.MAX_MARKET_CAP_SNAPSHOT_JSON_BYTES
+        accepted = {"padding": "x" * (limit - 30)}
+        self.assertLessEqual(earnings_calendar._validate_snapshot_size(accepted), limit)
+        with self.assertRaises(earnings_calendar.CalendarUnavailable):
+            earnings_calendar._validate_snapshot_size({"padding": "x" * limit})
 
     def test_coverage_uses_new_york_date_and_partial_final_week(self):
         start, end = earnings_calendar.coverage_window(
@@ -183,6 +200,31 @@ class EarningsCalendarBuildTests(unittest.TestCase):
 
 
 class ProviderBehaviorTests(unittest.TestCase):
+    def test_successful_response_observes_rate_limit_headers(self):
+        limiter = mock.Mock()
+        limiter.request_timeouts.return_value = (5, 10)
+        response = mock.Mock(
+            status_code=200,
+            headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "60"},
+        )
+        response.json.return_value = {"ticker": "AAPL", "marketCapitalization": 10}
+        earnings_calendar.fetch_finnhub_profile(
+            "secret",
+            {"primaryProviderSymbol": "AAPL"},
+            limiter,
+            http_get=mock.Mock(return_value=response),
+        )
+        limiter.observe_response.assert_called_once_with(response.headers)
+
+    def test_provider_reset_parser_ignores_malformed_and_past_values(self):
+        now = dt.datetime(2026, 8, 3, 12, tzinfo=dt.timezone.utc)
+        self.assertIsNone(earnings_calendar._provider_reset_datetime("bad", now))
+        self.assertIsNone(earnings_calendar._provider_reset_datetime("-1", now))
+        self.assertEqual(
+            earnings_calendar._provider_reset_datetime("60", now),
+            now + dt.timedelta(seconds=60),
+        )
+
     def test_budget_exhaustion_starts_no_profile_request(self):
         http_get = mock.Mock()
         with mock.patch.object(earnings_calendar.time, "monotonic", return_value=100.0):
@@ -368,6 +410,32 @@ class FirestoreTransactionTests(unittest.TestCase):
         first_write = next(index for index, item in enumerate(operations) if item[0] == "write")
         self.assertTrue(all(item[0] == "read" for item in operations[:first_write]))
 
+    def test_provider_headers_extend_but_never_shorten_persisted_block(self):
+        rate_state = {
+            "blockedUntil": "2099-01-01T00:01:00Z",
+            "recentAttempts": [],
+        }
+        self.db.collections[earnings_calendar.META_COLLECTION][
+            earnings_calendar.RATE_STATE_DOCUMENT
+        ] = rate_state
+        limiter = earnings_calendar.PersistentProviderLimiter(self.db, 45, 999999999)
+        with mock.patch.object(earnings_calendar.firestore, "transactional", lambda function: function), \
+                mock.patch.object(
+                    earnings_calendar,
+                    "_utc_now",
+                    return_value=dt.datetime(2099, 1, 1, tzinfo=dt.timezone.utc),
+                ):
+            limiter.observe_response({
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": "120",
+            })
+            limiter.defer(30)
+        stored = self.db.collections[earnings_calendar.META_COLLECTION][
+            earnings_calendar.RATE_STATE_DOCUMENT
+        ]
+        self.assertEqual(stored["blockedUntil"], "2099-01-01T00:02:00Z")
+        self.assertEqual(stored["providerRemaining"], 0)
+
     def test_checkpoint_rejects_stale_generation_without_writes(self):
         with mock.patch.object(earnings_calendar.firestore, "transactional", lambda function: function):
             with self.assertRaises(earnings_calendar.SnapshotConflict):
@@ -417,6 +485,77 @@ class FirestoreTransactionTests(unittest.TestCase):
         self.assertEqual(
             self.db.collections[earnings_calendar.WEEK_COLLECTION]["2026-08-03"], week
         )
+
+    def test_expired_deadline_aborts_before_any_publication_write(self):
+        before = dict(self.db.collections[earnings_calendar.META_COLLECTION])
+        with mock.patch.object(earnings_calendar.time, "monotonic", return_value=100):
+            with self.assertRaises(earnings_calendar.ExecutionDeadlineExceeded):
+                earnings_calendar._publish_if_lease_owned(
+                    self.db,
+                    "owner",
+                    self.now,
+                    {},
+                    {},
+                    [],
+                    [],
+                    {"datasetRevision": "new"},
+                    {"issuers": {}, "storageGeneration": 3},
+                    2,
+                    execution_deadline=100,
+                )
+        self.assertEqual(self.db.collections[earnings_calendar.META_COLLECTION], before)
+
+
+class HistoricalSnapshotTests(unittest.TestCase):
+    def setUp(self):
+        self.manifest = {"weeks": {"2026-07-20": {"revision": "rev"}}}
+        self.week = {
+            "weekStart": "2026-07-20",
+            "weekRevision": "rev",
+            "events": [{
+                "eventId": "event-a",
+                "reportDate": "2026-07-21",
+                "session": "before_open",
+                "displayOrder": 1,
+            }],
+        }
+        self.estimates = {
+            "weekStart": "2026-07-20",
+            "weekRevision": "rev",
+            "estimates": {},
+        }
+
+    def validate(self, weeks, estimates):
+        return earnings_calendar._validate_historical_documents(
+            self.manifest,
+            weeks,
+            estimates,
+            {"2026-07-20"},
+            dt.date(2026, 8, 3),
+        )
+
+    def test_missing_or_revision_inconsistent_history_is_rejected(self):
+        with self.assertRaises(earnings_calendar.HistoricalSnapshotInvalid):
+            self.validate({}, {"2026-07-20": self.estimates})
+        with self.assertRaises(earnings_calendar.HistoricalSnapshotInvalid):
+            self.validate(
+                {"2026-07-20": self.week},
+                {"2026-07-20": {**self.estimates, "weekRevision": "other"}},
+            )
+
+    def test_duplicate_or_invalid_frozen_orders_are_rejected(self):
+        duplicate = {
+            **self.week,
+            "events": [
+                self.week["events"][0],
+                {**self.week["events"][0], "eventId": "event-b"},
+            ],
+        }
+        with self.assertRaises(earnings_calendar.HistoricalSnapshotInvalid):
+            self.validate({"2026-07-20": duplicate}, {"2026-07-20": self.estimates})
+        invalid = {**self.week, "events": [{**self.week["events"][0], "displayOrder": True}]}
+        with self.assertRaises(earnings_calendar.HistoricalSnapshotInvalid):
+            self.validate({"2026-07-20": invalid}, {"2026-07-20": self.estimates})
 
 
 class RefreshCliTests(unittest.TestCase):

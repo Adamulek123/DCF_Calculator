@@ -26,6 +26,15 @@ def _write_result(payload: dict[str, object]) -> None:
     print(json.dumps(payload, sort_keys=True, default=str), flush=True)
 
 
+def _write_github_outputs(result: dict[str, object]) -> None:
+    output_path = os.environ.get("GITHUB_OUTPUT", "").strip()
+    if not output_path:
+        return
+    with open(output_path, "a", encoding="utf-8") as output:
+        output.write(f"provider_checked={'true' if result.get('providerChecked') else 'false'}\n")
+        output.write(f"checked_at={result.get('checkedAt') or ''}\n")
+
+
 def _firestore_client():
     encoded_key = os.environ.get("FIREBASE_SERVICE_ACCOUNT_KEY_BASE64", "").strip()
     if not encoded_key:
@@ -99,6 +108,7 @@ def main() -> int:
 
     status = result.get("status")
     _write_result({"event": "earnings_calendar_refresh", **result})
+    _write_github_outputs(result)
     return 0 if status in SUCCESS_STATUSES else 1
 
 

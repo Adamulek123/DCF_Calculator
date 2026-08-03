@@ -167,6 +167,24 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(snapshot["issuers"]["1"]["requestedProviderSymbol"], "BRK.B")
         self.assertEqual(first, caps.snapshot_content_revision(snapshot))
 
+    def test_alias_success_followed_by_reconciliation_keeps_content_revision(self):
+        alias_issuer = {
+            **self.issuer,
+            "symbol": "BRK.B",
+            "primaryProviderSymbol": "BRK.B",
+            "providerSymbols": ["BRK.B", "BRK-B"],
+            "constituentSymbols": ["BRK.B"],
+        }
+        snapshot = caps.reconcile_snapshot({}, {"1": alias_issuer}, "v1")
+        snapshot["issuers"]["1"] = caps.normalize_profile(
+            {"ticker": "BRK-B", "marketCapitalization": 100}, alias_issuer, self.now
+        )
+        first = caps.snapshot_content_revision(snapshot)
+        reconciled = caps.reconcile_snapshot(snapshot, {"1": alias_issuer}, "v1")
+        self.assertEqual(reconciled["issuers"]["1"]["providerSymbol"], "BRK-B")
+        self.assertEqual(reconciled["issuers"]["1"]["primaryProviderSymbol"], "BRK.B")
+        self.assertEqual(first, caps.snapshot_content_revision(reconciled))
+
     def test_retained_removed_issuer_survives_until_no_longer_referenced(self):
         removed = issuer("removed", "OLD")
         stored = caps.reconcile_snapshot({}, {"removed": removed}, "v1")
@@ -178,6 +196,35 @@ class ProfileTests(unittest.TestCase):
 
 
 class SeedTests(unittest.TestCase):
+    def test_seed_retries_429_with_persisted_exponential_backoff(self):
+        limiter = mock.Mock()
+        limited = seed.calendar.ProviderRateLimited("limited", retry_after=None)
+        with mock.patch.object(
+            seed.calendar,
+            "fetch_finnhub_profile",
+            side_effect=[limited, {"ticker": "ONE", "marketCapitalization": 1}],
+        ) as fetch, mock.patch.object(
+            seed.calendar, "_provider_retry_delay", return_value=0.75
+        ):
+            result = seed.fetch_profile_with_backoff("key", issuer("1", "ONE"), limiter)
+        self.assertEqual(result["ticker"], "ONE")
+        self.assertEqual(fetch.call_count, 2)
+        limiter.defer.assert_called_once_with(0.75)
+
+    def test_seed_honors_retry_after_and_stops_when_limiter_budget_expires(self):
+        limiter = mock.Mock()
+        with mock.patch.object(
+            seed.calendar,
+            "fetch_finnhub_profile",
+            side_effect=[
+                seed.calendar.ProviderRateLimited("limited", retry_after=600),
+                seed.calendar.ProviderBudgetExhausted("deadline"),
+            ],
+        ) as fetch:
+            with self.assertRaises(seed.calendar.ProviderBudgetExhausted):
+                seed.fetch_profile_with_backoff("key", issuer("1", "ONE"), limiter)
+        self.assertEqual(fetch.call_count, 2)
+        limiter.defer.assert_not_called()
     def test_exact_checkpoint_boundary_still_finalizes_completeness(self):
         issuers = {"1": issuer("1", "ONE")}
         snapshot = caps.reconcile_snapshot({}, issuers, "v1")
@@ -258,6 +305,23 @@ class QueueTests(unittest.TestCase):
             snapshot, issuers, events, self.today, self.now, boundary_ids={"2"}
         )
         self.assertEqual([item["issuerId"] for item in queue], ["1", "2"])
+
+    def test_selection_reserves_capacity_for_maximum_age_overdue_work(self):
+        high = [{
+            "issuerId": str(index),
+            "issuer": issuer(str(index), f"HIGH{index}"),
+            "priority": 1,
+            "maximumAgeOverdueBySeconds": 0,
+        } for index in range(20)]
+        overdue = {
+            "issuerId": "old",
+            "issuer": issuer("old", "OLD"),
+            "priority": 8,
+            "maximumAgeOverdueBySeconds": 86400,
+        }
+        for _run in range(5):
+            selected = caps.select_refresh_queue(high + [overdue], 10)
+            self.assertIn("old", [item["issuerId"] for item in selected])
 
 
 class RateLimitTests(unittest.TestCase):

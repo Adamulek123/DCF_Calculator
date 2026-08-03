@@ -63,6 +63,24 @@ def valid_cap(record):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
 
 
+def fetch_profile_with_backoff(api_key, issuer, limiter, max_attempts=3):
+    """Retry seed-only 429s through the shared persisted limiter."""
+    for attempt in range(max_attempts):
+        try:
+            return calendar.fetch_finnhub_profile(
+                api_key,
+                issuer,
+                limiter,
+                default_retry_after=0,
+            )
+        except calendar.ProviderRateLimited as exc:
+            if attempt + 1 >= max_attempts:
+                raise
+            if exc.retry_after is None:
+                limiter.defer(calendar._provider_retry_delay(attempt))
+    raise AssertionError("unreachable")
+
+
 def retained_issuer_ids(db, constituents, manifest):
     week_keys = set((manifest.get("weeks") or {}).keys())
     documents = calendar._get_week_documents(db, week_keys)
@@ -186,7 +204,7 @@ def main():
             attempted_at = calendar._utc_now()
             stop_after_checkpoint = False
             try:
-                profile = calendar.fetch_finnhub_profile(api_key, issuer, limiter)
+                profile = fetch_profile_with_backoff(api_key, issuer, limiter)
                 snapshot["issuers"][issuer_id] = normalize_profile(profile, issuer, attempted_at)
                 updated += 1
             except calendar.ProviderBudgetExhausted:

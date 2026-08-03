@@ -40,6 +40,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Refresh calendar
+        id: refresh
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FIREBASE_SERVICE_ACCOUNT_KEY_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 }}
@@ -54,6 +55,7 @@ jobs:
           EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF: ${{ vars.EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF }}
         run: python scripts/run_earnings_calendar_refresh.py
       - name: Verify publication and notify external heartbeat
+        if: steps.refresh.outputs.provider_checked == 'true'
         env:
           EARNINGS_HEARTBEAT_URL: ${{ secrets.EARNINGS_HEARTBEAT_URL }}
         run: python scripts/notify_earnings_heartbeat.py
