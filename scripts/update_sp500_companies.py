@@ -236,11 +236,34 @@ def fetch_wikipedia(session=requests, timeout=30):
     }
 
 
-def build_snapshot(scraped, reviewed_date=None):
+def merge_historical_companies(companies, previous_snapshot, reviewed_date):
+    current_symbols = {company["symbol"] for company in companies}
+    previous_companies = (
+        previous_snapshot.get("companies", []) if isinstance(previous_snapshot, dict) else []
+    )
+    removal_date = (reviewed_date - dt.timedelta(days=1)).isoformat()
+    for previous in previous_companies:
+        if not isinstance(previous, dict) or previous.get("symbol") in current_symbols:
+            continue
+        historical = dict(previous)
+        if historical.get("validTo") is None:
+            if removal_date < str(historical.get("validFrom") or ""):
+                raise ConstituentScrapeError(
+                    f"Removal date precedes validFrom for {historical.get('symbol')}."
+                )
+            historical["validTo"] = removal_date
+        companies.append(historical)
+    companies.sort(key=lambda company: company["symbol"])
+    return companies
+
+
+def build_snapshot(scraped, reviewed_date=None, previous_snapshot=None):
     reviewed_date = reviewed_date or dt.datetime.now(dt.timezone.utc).date()
     if isinstance(reviewed_date, str):
         reviewed_date = dt.date.fromisoformat(reviewed_date)
     companies = normalize_records(parse_constituent_table(scraped["html"]))
+    current_symbols = {company["symbol"] for company in companies}
+    companies = merge_historical_companies(companies, previous_snapshot, reviewed_date)
     return {
         "metadata": {
             "version": reviewed_date.isoformat(),
@@ -251,6 +274,7 @@ def build_snapshot(scraped, reviewed_date=None):
             "pageId": scraped.get("pageId"),
             "revisionId": scraped.get("revisionId"),
             "securityCount": len(companies),
+            "activeSecurityCount": len(current_symbols),
         },
         "companies": companies,
     }
@@ -288,12 +312,28 @@ def main():
         help="Destination JSON path.",
     )
     parser.add_argument(
+        "--previous",
+        type=Path,
+        help="Prior reviewed snapshot to merge for removed-security retention (defaults to output).",
+    )
+    parser.add_argument(
         "--reviewed-date",
         help="Override the UTC review date (YYYY-MM-DD), primarily for reproducible tests.",
     )
     args = parser.parse_args()
     scraped = fetch_wikipedia()
-    snapshot = build_snapshot(scraped, reviewed_date=args.reviewed_date)
+    previous_path = args.previous or args.output
+    previous_snapshot = None
+    if previous_path.is_file():
+        try:
+            previous_snapshot = json.loads(previous_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConstituentScrapeError("The prior reviewed snapshot is invalid.") from exc
+    snapshot = build_snapshot(
+        scraped,
+        reviewed_date=args.reviewed_date,
+        previous_snapshot=previous_snapshot,
+    )
     destination = write_snapshot(snapshot, args.output)
     metadata = snapshot["metadata"]
     print(json.dumps({

@@ -2,7 +2,9 @@
 
 This is regression evidence, not a provider contract. It compares Finnhub's
 millions-scale market capitalization with latest SEC shares outstanding times a
-Yahoo trading price. Set FINNHUB_API_KEY and a descriptive SEC_USER_AGENT.
+Yahoo trading price. This diagnostic requires a separate provider key so it
+cannot bypass the production key's persisted limiter. Set
+FINNHUB_VALIDATION_API_KEY and a descriptive SEC_USER_AGENT.
 """
 
 from __future__ import annotations
@@ -53,10 +55,13 @@ def yahoo_price(symbol):
 
 
 def main():
-    token = os.environ.get("FINNHUB_API_KEY", "").strip()
+    token = os.environ.get("FINNHUB_VALIDATION_API_KEY", "").strip()
+    production_token = os.environ.get("FINNHUB_API_KEY", "").strip()
     user_agent = os.environ.get("SEC_USER_AGENT", "").strip()
     if not token or not user_agent:
-        raise SystemExit("FINNHUB_API_KEY and SEC_USER_AGENT are required")
+        raise SystemExit("FINNHUB_VALIDATION_API_KEY and SEC_USER_AGENT are required")
+    if production_token and token == production_token:
+        raise SystemExit("FINNHUB_VALIDATION_API_KEY must be separate from FINNHUB_API_KEY")
     results = {}
     for symbol, cik in SYMBOLS.items():
         profile = get_json(

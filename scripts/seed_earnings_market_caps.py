@@ -27,10 +27,12 @@ if str(ROOT) not in sys.path:
 import earnings_calendar as calendar  # noqa: E402
 from earnings_market_caps import (  # noqa: E402
     CURRENCY_VALIDATION,
+    PROVIDER_SEMANTICS_VERSION,
     MarketCapValidationError,
     failure_record,
     group_active_issuers,
     normalize_profile,
+    profile_attempt_due,
     reconcile_snapshot,
     snapshot_content_revision,
 )
@@ -61,16 +63,52 @@ def valid_cap(record):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
 
 
+def retained_issuer_ids(db, constituents, manifest):
+    week_keys = set((manifest.get("weeks") or {}).keys())
+    documents = calendar._get_week_documents(db, week_keys)
+    retained = set()
+    by_symbol = {}
+    for company in constituents["companies"]:
+        by_symbol.setdefault(company["symbol"], []).append(company)
+    for document in documents.values():
+        for event in document.get("events") or []:
+            for company in by_symbol.get(event.get("symbol"), []):
+                retained.add(company["cik"])
+    return retained
+
+
+def finalize_seed_metadata(snapshot, issuers, constituent_version, completed_at):
+    snapshot["currentIssuerMissingCount"] = sum(
+        not valid_cap(snapshot["issuers"].get(key)) for key in issuers
+    )
+    before = (
+        snapshot.get("lastCompleteSeedAt"),
+        snapshot.get("lastCompleteSeedConstituentVersion"),
+    )
+    if snapshot["currentIssuerMissingCount"] == 0:
+        snapshot["lastCompleteSeedAt"] = calendar._iso_utc(completed_at)
+        snapshot["lastCompleteSeedConstituentVersion"] = constituent_version
+    after = (
+        snapshot.get("lastCompleteSeedAt"),
+        snapshot.get("lastCompleteSeedConstituentVersion"),
+    )
+    return before != after
+
+
 def main():
+    started_monotonic = time.monotonic()
     args = parse_args()
     if not 1 <= args.max_profiles <= 500 or not 1 <= args.checkpoint_size <= 100:
         raise SystemExit("profile and checkpoint bounds are invalid")
-    permission = calendar._provider_permission_metadata()
+    permission = calendar._provider_permission_metadata(require=True)
     db = firestore_client()
     now = calendar._utc_now()
     market_today = now.astimezone(calendar.ZoneInfo("America/New_York")).date()
     constituents = calendar.load_constituents()
-    if CURRENCY_VALIDATION.get("constituentVersion") != constituents["metadata"]["version"]:
+    if (
+        CURRENCY_VALIDATION.get("constituentVersion") != constituents["metadata"]["version"]
+        or CURRENCY_VALIDATION.get("providerSemanticsVersion") != PROVIDER_SEMANTICS_VERSION
+    ):
         raise RuntimeError("Currency validation does not cover the reviewed constituent version")
     issuers, _ = group_active_issuers(constituents["companies"], market_today)
     owner = f"seed-{uuid.uuid4().hex}"
@@ -81,12 +119,19 @@ def main():
     attempted = updated = failed = skipped = 0
     try:
         stored = calendar._get_market_cap_snapshot(db)
+        manifest = calendar._get_manifest(db) or {}
+        retained = retained_issuer_ids(db, constituents, manifest)
         generation = max(0, int(stored.get("storageGeneration") or 0))
-        snapshot = reconcile_snapshot(stored, issuers, constituents["metadata"]["version"])
+        snapshot = reconcile_snapshot(
+            stored, issuers, constituents["metadata"]["version"], retained
+        )
         snapshot["providerPermission"] = permission
         work = []
         for issuer_id, issuer in sorted(issuers.items(), key=lambda item: item[1]["symbol"]):
-            if not args.force and valid_cap(snapshot["issuers"].get(issuer_id)):
+            record = snapshot["issuers"].get(issuer_id)
+            if not args.force and (
+                valid_cap(record) or not profile_attempt_due(record, now)
+            ):
                 skipped += 1
             else:
                 work.append((issuer_id, issuer))
@@ -129,7 +174,7 @@ def main():
                         raise
                     remote = calendar._get_market_cap_snapshot(db)
                     merged = reconcile_snapshot(
-                        remote, issuers, constituents["metadata"]["version"]
+                        remote, issuers, constituents["metadata"]["version"], retained
                     )
                     for key in dirty:
                         merged["issuers"][key] = snapshot["issuers"][key]
@@ -138,34 +183,52 @@ def main():
                     generation = max(0, int(remote.get("storageGeneration") or 0))
 
         for issuer_id, issuer in work:
-            if time.monotonic() + 1 >= deadline:
-                break
             attempted_at = calendar._utc_now()
-            attempted += 1
+            stop_after_checkpoint = False
             try:
                 profile = calendar.fetch_finnhub_profile(api_key, issuer, limiter)
                 snapshot["issuers"][issuer_id] = normalize_profile(profile, issuer, attempted_at)
                 updated += 1
+            except calendar.ProviderBudgetExhausted:
+                break
+            except calendar.ProviderRateLimited as exc:
+                snapshot["issuers"][issuer_id] = failure_record(
+                    snapshot["issuers"].get(issuer_id), issuer, attempted_at, str(exc)
+                )
+                failed += 1
+                stop_after_checkpoint = True
             except (calendar.ProviderError, MarketCapValidationError) as exc:
                 snapshot["issuers"][issuer_id] = failure_record(
                     snapshot["issuers"].get(issuer_id), issuer, attempted_at, str(exc)
                 )
                 failed += 1
+            attempted = limiter.attempts_by_type["profile"]
             dirty.add(issuer_id)
             buffered += 1
             if buffered >= args.checkpoint_size:
                 save_checkpoint(attempted_at)
                 buffered = 0
 
-        if buffered or generation == max(0, int(stored.get("storageGeneration") or 0)):
-            snapshot["currentIssuerMissingCount"] = sum(
-                not valid_cap(snapshot["issuers"].get(key)) for key in issuers
-            )
-            if snapshot["currentIssuerMissingCount"] == 0:
-                snapshot["lastCompleteSeedAt"] = calendar._iso_utc(calendar._utc_now())
-                snapshot["lastCompleteSeedConstituentVersion"] = constituents["metadata"]["version"]
+            if stop_after_checkpoint:
+                if buffered:
+                    save_checkpoint(attempted_at)
+                    buffered = 0
+                break
+
+        completion_changed = finalize_seed_metadata(
+            snapshot,
+            issuers,
+            constituents["metadata"]["version"],
+            calendar._utc_now(),
+        )
+        if buffered or completion_changed:
             save_checkpoint(calendar._utc_now())
         missing = sum(not valid_cap(snapshot["issuers"].get(key)) for key in issuers)
+        missing_symbols = sorted(
+            issuer["symbol"]
+            for issuer_id, issuer in issuers.items()
+            if not valid_cap(snapshot["issuers"].get(issuer_id))
+        )
         print(json.dumps({
             "event": "earnings_market_cap_seed",
             "status": "complete" if missing == 0 else "partial",
@@ -174,7 +237,10 @@ def main():
             "failed": failed,
             "skipped": skipped,
             "stillMissing": missing,
+            "stillMissingSymbols": missing_symbols,
             "storageGeneration": generation,
+            "snapshotApproximateJsonBytes": calendar._snapshot_json_bytes(snapshot),
+            "elapsedMs": round((time.monotonic() - started_monotonic) * 1000),
         }, sort_keys=True))
         return 0 if failed == 0 else 1
     finally:

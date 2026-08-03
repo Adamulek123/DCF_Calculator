@@ -1,6 +1,7 @@
 name: Refresh earnings calendar
 
 on:
+  pull_request:
   schedule:
     - cron: "17 */4 * * *"
   workflow_dispatch:
@@ -9,13 +10,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: earnings-calendar-refresh
+  group: earnings-calendar-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'refresh' }}
   cancel-in-progress: false
 
 jobs:
-  refresh:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,6 +26,19 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Test earnings ingestion
         run: python -m unittest tests.test_earnings_market_caps tests.test_earnings_calendar
+
+  refresh:
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
       - name: Refresh calendar
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -39,3 +53,7 @@ jobs:
           EARNINGS_PROVIDER_ACCOUNT_PLAN: ${{ vars.EARNINGS_PROVIDER_ACCOUNT_PLAN }}
           EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF: ${{ vars.EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF }}
         run: python scripts/run_earnings_calendar_refresh.py
+      - name: Verify publication and notify external heartbeat
+        env:
+          EARNINGS_HEARTBEAT_URL: ${{ secrets.EARNINGS_HEARTBEAT_URL }}
+        run: python scripts/notify_earnings_heartbeat.py

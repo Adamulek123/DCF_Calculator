@@ -1,11 +1,14 @@
 import datetime as dt
+from contextlib import ExitStack
 import os
+from pathlib import Path
 import unittest
 from unittest import mock
 
 from flask import Flask
 
 import earnings_calendar
+from scripts import run_earnings_calendar_refresh as refresh_cli
 
 
 class FakeSnapshot:
@@ -23,12 +26,15 @@ class FakeDocument:
         self.collection = collection
         self.document_id = document_id
 
-    def get(self):
+    def get(self, transaction=None):
+        if transaction is not None:
+            transaction.operations.append(("read", self.collection.name, self.document_id))
         return FakeSnapshot(self.document_id, self.collection.documents.get(self.document_id))
 
 
 class FakeCollection:
-    def __init__(self, documents):
+    def __init__(self, name, documents):
+        self.name = name
         self.documents = documents
 
     def document(self, document_id):
@@ -40,10 +46,28 @@ class FakeDB:
         self.collections = collections
 
     def collection(self, name):
-        return FakeCollection(self.collections.setdefault(name, {}))
+        return FakeCollection(name, self.collections.setdefault(name, {}))
 
     def get_all(self, refs):
         return [ref.get() for ref in refs]
+
+    def transaction(self):
+        transaction = FakeTransaction()
+        self.last_transaction = transaction
+        return transaction
+
+
+class FakeTransaction:
+    def __init__(self):
+        self.operations = []
+
+    def set(self, ref, data):
+        self.operations.append(("write", ref.collection.name, ref.document_id))
+        ref.collection.documents[ref.document_id] = dict(data)
+
+    def delete(self, ref):
+        self.operations.append(("delete", ref.collection.name, ref.document_id))
+        ref.collection.documents.pop(ref.document_id, None)
 
 
 class NoopLimiter:
@@ -71,6 +95,16 @@ class EarningsCalendarBuildTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"EARNINGS_FUTURE_COVERAGE_DAYS": "31"}, clear=False):
             with self.assertRaises(earnings_calendar.CalendarUnavailable):
                 earnings_calendar._runtime_config()
+
+    def test_workflow_has_pull_request_ci_and_external_runtime_headroom(self):
+        workflow = (
+            Path(__file__).parents[1] / ".github" / "workflows" / "refresh-earnings-calendar.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("timeout-minutes: 25", workflow)
+        self.assertIn('EARNINGS_EXECUTION_MAX_SECONDS: "720"', workflow)
+        self.assertIn("scripts/notify_earnings_heartbeat.py", workflow)
+        self.assertIn("secrets.EARNINGS_HEARTBEAT_URL", workflow)
 
     def test_coverage_uses_new_york_date_and_partial_final_week(self):
         start, end = earnings_calendar.coverage_window(
@@ -138,6 +172,280 @@ class EarningsCalendarBuildTests(unittest.TestCase):
         )
         self.assertEqual(first["datasetRevision"], second["datasetRevision"])
 
+    def test_provider_semantics_change_invalidates_currency_validation(self):
+        version = earnings_calendar.CURRENCY_VALIDATION["constituentVersion"]
+        with mock.patch.object(
+            earnings_calendar,
+            "PROVIDER_SEMANTICS_VERSION",
+            earnings_calendar.PROVIDER_SEMANTICS_VERSION + 1,
+        ):
+            self.assertFalse(earnings_calendar._currency_validation_is_current(version))
+
+
+class ProviderBehaviorTests(unittest.TestCase):
+    def test_budget_exhaustion_starts_no_profile_request(self):
+        http_get = mock.Mock()
+        with mock.patch.object(earnings_calendar.time, "monotonic", return_value=100.0):
+            limiter = earnings_calendar.PersistentProviderLimiter(None, 45, 114.9)
+            with self.assertRaises(earnings_calendar.ProviderBudgetExhausted):
+                earnings_calendar.fetch_finnhub_profile(
+                    "secret",
+                    {
+                        "primaryProviderSymbol": "AAPL",
+                        "providerSymbols": ["AAPL"],
+                    },
+                    limiter,
+                    http_get=http_get,
+                )
+        http_get.assert_not_called()
+        self.assertEqual(limiter.attempts, 0)
+        self.assertEqual(limiter.attempts_by_type["profile"], 0)
+
+    def test_retry_after_supports_numeric_and_http_date_without_cap(self):
+        numeric = mock.Mock(headers={"Retry-After": "600"})
+        self.assertEqual(earnings_calendar._response_retry_after(numeric), 600)
+        now = dt.datetime(2026, 8, 3, 12, tzinfo=dt.timezone.utc)
+        dated = mock.Mock(headers={"Retry-After": "Mon, 03 Aug 2026 12:10:00 GMT"})
+        self.assertEqual(earnings_calendar._response_retry_after(dated, now=now), 600)
+
+    def test_profile_429_persists_full_block_and_raises_stop_signal(self):
+        limiter = mock.Mock()
+        limiter.request_timeouts.return_value = (5, 10)
+        response = mock.Mock(status_code=429, headers={"Retry-After": "600"})
+        with self.assertRaises(earnings_calendar.ProviderRateLimited):
+            earnings_calendar.fetch_finnhub_profile(
+                "secret",
+                {"primaryProviderSymbol": "AAPL"},
+                limiter,
+                http_get=mock.Mock(return_value=response),
+            )
+        limiter.acquire.assert_called_once_with("profile")
+        limiter.defer.assert_called_once_with(600)
+
+    def test_retry_backoff_is_exponential_with_jitter(self):
+        with mock.patch.object(earnings_calendar.random, "uniform", return_value=0.1):
+            self.assertEqual(earnings_calendar._provider_retry_delay(0), 0.35)
+            self.assertEqual(earnings_calendar._provider_retry_delay(1), 0.6)
+
+    def test_overdue_heartbeat_uses_checked_at_when_refresh_after_is_missing(self):
+        checked = dt.datetime(2026, 8, 3, tzinfo=dt.timezone.utc)
+        self.assertFalse(earnings_calendar._manifest_overdue(
+            {"checkedAt": "2026-08-03T00:00:00Z"},
+            now=checked + dt.timedelta(hours=7, minutes=59),
+        ))
+        self.assertTrue(earnings_calendar._manifest_overdue(
+            {"checkedAt": "2026-08-03T00:00:00Z"},
+            now=checked + dt.timedelta(hours=8, minutes=1),
+        ))
+
+    def test_permission_is_required_unless_development_mode_is_explicit(self):
+        keys = {
+            "EARNINGS_CALENDAR_DEVELOPMENT_MODE": "true",
+            "EARNINGS_PROVIDER_PERMISSION_CONFIRMED": "",
+            "EARNINGS_PROVIDER_PERMISSION_DATE": "",
+            "EARNINGS_PROVIDER_ACCOUNT_PLAN": "",
+            "EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF": "",
+        }
+        with mock.patch.dict(os.environ, keys, clear=False):
+            metadata = earnings_calendar._provider_permission_metadata()
+        self.assertFalse(metadata["confirmed"])
+        self.assertFalse(metadata["scope"]["serverSideCaching"])
+
+    def test_complete_refresh_publishes_without_recording_budget_exhaustion(self):
+        class FakeProviderLimiter:
+            def __init__(self):
+                self.attempts_by_type = {"calendar": 1, "profile": 0}
+                self.wait_ms = 0
+
+            def remaining_before_deadline(self):
+                return 1
+
+        fake_limiter = FakeProviderLimiter()
+        company = {
+            "cik": "0001408198",
+            "symbol": "MSCI",
+            "providerSymbol": "MSCI",
+            "providerSymbols": ["MSCI"],
+            "name": "MSCI Inc.",
+            "validFrom": dt.date(2000, 1, 1),
+            "validTo": None,
+            "calendarPrimary": False,
+        }
+        constituents = {
+            "metadata": {
+                "version": earnings_calendar.CURRENCY_VALIDATION["constituentVersion"]
+            },
+            "companies": [company],
+        }
+        publish = mock.Mock()
+        patches = [
+            mock.patch.object(earnings_calendar, "_runtime_config", return_value={
+                "futureCoverageDays": 30,
+                "providerSupportedFutureDays": 30,
+                "requestsPerMinute": 45,
+                "profileMax": 1,
+                "executionMaxSeconds": 120,
+            }),
+            mock.patch.object(earnings_calendar, "_provider_permission_metadata", return_value={}),
+            mock.patch.object(earnings_calendar, "_get_manifest", side_effect=[{}, {}]),
+            mock.patch.object(earnings_calendar, "_acquire_lease", return_value=True),
+            mock.patch.object(earnings_calendar, "_renew_lease", return_value=False),
+            mock.patch.object(earnings_calendar, "_release_lease"),
+            mock.patch.object(earnings_calendar, "load_constituents", return_value=constituents),
+            mock.patch.object(
+                earnings_calendar,
+                "coverage_window",
+                return_value=(dt.date(2026, 8, 3), dt.date(2026, 8, 9)),
+            ),
+            mock.patch.object(earnings_calendar, "_get_week_documents", return_value={}),
+            mock.patch.object(earnings_calendar, "_get_market_cap_snapshot", return_value={}),
+            mock.patch.object(earnings_calendar, "PersistentProviderLimiter", return_value=fake_limiter),
+            mock.patch.object(earnings_calendar, "_calendar_secret", return_value="secret"),
+            mock.patch.object(earnings_calendar, "fetch_finnhub_calendar", return_value={}),
+            mock.patch.object(
+                earnings_calendar,
+                "normalize_provider_payload",
+                return_value=([{
+                    **sample_event(),
+                    "reportDate": "2026-08-04",
+                }], {
+                    "rawEventCount": 1,
+                    "matchedEventCount": 1,
+                    "unknownSymbolCount": 0,
+                    "duplicateEventCount": 0,
+                    "conflictingDuplicateCount": 0,
+                }),
+            ),
+            mock.patch.object(earnings_calendar, "_validate_candidate_size"),
+            mock.patch.object(
+                earnings_calendar,
+                "fetch_finnhub_profile",
+                side_effect=earnings_calendar.ProviderBudgetExhausted("budget"),
+            ),
+            mock.patch.object(earnings_calendar, "_publish_if_lease_owned", publish),
+            mock.patch.object(earnings_calendar, "_log"),
+        ]
+        with ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            result = earnings_calendar.refresh_earnings_calendar(
+                object(),
+                now=dt.datetime(2026, 8, 3, 12, tzinfo=dt.timezone.utc),
+            )
+        self.assertEqual(result["status"], "updated")
+        self.assertEqual(result["profileAttempted"], 0)
+        self.assertEqual(result["profileFailed"], 0)
+        published_snapshot = publish.call_args.args[8]
+        record = published_snapshot["issuers"]["0001408198"]
+        self.assertNotIn("lastAttemptAt", record)
+        self.assertNotIn("consecutiveFailures", record)
+
+
+class FirestoreTransactionTests(unittest.TestCase):
+    def setUp(self):
+        self.now = dt.datetime(2026, 8, 3, 12, tzinfo=dt.timezone.utc)
+        self.db = FakeDB({
+            earnings_calendar.META_COLLECTION: {
+                earnings_calendar.LEASE_DOCUMENT: {
+                    "owner": "owner",
+                    "expiresAt": "2026-08-03T12:05:00Z",
+                },
+                earnings_calendar.MARKET_CAP_DOCUMENT: {"storageGeneration": 2},
+            }
+        })
+
+    def test_checkpoint_reads_before_writes_and_increments_generation(self):
+        with mock.patch.object(earnings_calendar.firestore, "transactional", lambda function: function):
+            generation = earnings_calendar.checkpoint_market_cap_snapshot(
+                self.db,
+                "owner",
+                {"issuers": {}, "storageGeneration": 2},
+                2,
+                self.now,
+            )
+        self.assertEqual(generation, 3)
+        operations = self.db.last_transaction.operations
+        first_write = next(index for index, item in enumerate(operations) if item[0] == "write")
+        self.assertTrue(all(item[0] == "read" for item in operations[:first_write]))
+
+    def test_checkpoint_rejects_stale_generation_without_writes(self):
+        with mock.patch.object(earnings_calendar.firestore, "transactional", lambda function: function):
+            with self.assertRaises(earnings_calendar.SnapshotConflict):
+                earnings_calendar.checkpoint_market_cap_snapshot(
+                    self.db,
+                    "owner",
+                    {"issuers": {}},
+                    1,
+                    self.now,
+                )
+        self.assertFalse(any(item[0] == "write" for item in self.db.last_transaction.operations))
+
+    def test_lease_renewal_loss_stops_without_a_write(self):
+        self.db.collections[earnings_calendar.META_COLLECTION][earnings_calendar.LEASE_DOCUMENT][
+            "owner"
+        ] = "other-owner"
+        with mock.patch.object(earnings_calendar.firestore, "transactional", lambda function: function):
+            with self.assertRaises(earnings_calendar.LeaseLost):
+                earnings_calendar._renew_lease(self.db, "owner", self.now, force=True)
+        self.assertFalse(any(item[0] == "write" for item in self.db.last_transaction.operations))
+
+    def test_publish_is_one_read_before_write_transaction_and_releases_lease(self):
+        week = {"weekStart": "2026-08-03", "weekRevision": "week", "events": []}
+        estimates = {"weekStart": "2026-08-03", "weekRevision": "week", "estimates": {}}
+        manifest = {"datasetRevision": "dataset"}
+        snapshot = {"issuers": {}, "storageGeneration": 3}
+        with mock.patch.object(earnings_calendar.firestore, "transactional", lambda function: function):
+            earnings_calendar._publish_if_lease_owned(
+                self.db,
+                "owner",
+                self.now,
+                {"2026-08-03": week},
+                {"2026-08-03": estimates},
+                ["2026-08-03"],
+                [],
+                manifest,
+                snapshot,
+                2,
+            )
+        operations = self.db.last_transaction.operations
+        first_write = next(index for index, item in enumerate(operations) if item[0] == "write")
+        self.assertTrue(all(item[0] == "read" for item in operations[:first_write]))
+        self.assertNotIn(
+            earnings_calendar.LEASE_DOCUMENT,
+            self.db.collections[earnings_calendar.META_COLLECTION],
+        )
+        self.assertEqual(
+            self.db.collections[earnings_calendar.WEEK_COLLECTION]["2026-08-03"], week
+        )
+
+
+class RefreshCliTests(unittest.TestCase):
+    def test_success_and_benign_noop_statuses_exit_zero(self):
+        for status in ("fresh", "refresh_in_progress", "unchanged", "updated"):
+            with self.subTest(status=status), \
+                    mock.patch.object(refresh_cli, "_firestore_client", return_value=object()), \
+                    mock.patch.object(
+                        refresh_cli, "refresh_earnings_calendar", return_value={"status": status}
+                    ), \
+                    mock.patch.object(refresh_cli, "_write_result"):
+                self.assertEqual(refresh_cli.main(), 0)
+
+    def test_provider_and_unexpected_failures_exit_nonzero(self):
+        with mock.patch.object(refresh_cli, "_firestore_client", return_value=object()), \
+                mock.patch.object(
+                    refresh_cli,
+                    "refresh_earnings_calendar",
+                    side_effect=earnings_calendar.ProviderRateLimited("limited"),
+                ), \
+                mock.patch.object(refresh_cli, "_write_result"):
+            self.assertEqual(refresh_cli.main(), 1)
+        with mock.patch.object(refresh_cli, "_firestore_client", return_value=object()), \
+                mock.patch.object(
+                    refresh_cli, "refresh_earnings_calendar", side_effect=RuntimeError("boom")
+                ), \
+                mock.patch.object(refresh_cli, "_write_result"):
+            self.assertEqual(refresh_cli.main(), 1)
+
 
 class EarningsCalendarRouteTests(unittest.TestCase):
     def setUp(self):
@@ -185,6 +493,19 @@ class EarningsCalendarRouteTests(unittest.TestCase):
         event = response.get_json()["weeks"][0]["events"][0]
         self.assertNotIn("epsEstimate", event)
         self.assertNotIn("revenueEstimate", event)
+
+    def test_health_route_is_monitorable_without_a_browser(self):
+        manifest = self.db.collections[earnings_calendar.META_COLLECTION][earnings_calendar.META_DOCUMENT]
+        manifest["checkedAt"] = "2026-08-03T10:00:00Z"
+        manifest["refreshAfter"] = "2026-08-03T14:00:00Z"
+        with mock.patch.object(
+            earnings_calendar,
+            "_utc_now",
+            return_value=dt.datetime(2026, 8, 3, 15, tzinfo=dt.timezone.utc),
+        ):
+            response = self.client.get("/earnings-calendar/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"], "ok")
 
     def test_week_route_safely_falls_back_for_duplicate_display_orders(self):
         week = self.db.collections[earnings_calendar.WEEK_COLLECTION]["2026-07-20"]

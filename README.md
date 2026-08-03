@@ -133,11 +133,21 @@ EARNINGS_PROVIDER_ACCOUNT_PLAN=<approved account or plan label>
 EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF=<internal correspondence reference>
 ```
 
+Permission evidence is required on every host by default. Local emulator-only
+refreshes must opt in explicitly with `EARNINGS_CALENDAR_DEVELOPMENT_MODE=true`;
+development metadata never advertises caching, display, ranking, or
+redistribution permission when confirmation is absent.
+
 GitHub Actions runs `scripts/run_earnings_calendar_refresh.py` every four hours.
 Calendar and profile attempts share a persisted 45-per-rolling-minute limiter,
 a renewable Firestore lease, and a 12-minute execution budget. Configure the
 two secrets and four permission variables in the backend repository before
-running the workflow. Deploy `firestore.indexes.json` once so the compact
+running the workflow. Also configure `EARNINGS_HEARTBEAT_URL` as the secret
+ping URL from an external dead-man monitoring service. After each successful
+refresh the workflow verifies the public `checkedAt` heartbeat and pings that
+service; a delayed, failed, dropped, or inactivity-disabled schedule therefore
+misses its external deadline and alerts independently of GitHub. Deploy
+`firestore.indexes.json` once so the compact
 `issuers` map is exempt from indexing.
 
 When using the workspace-root `start_backend.bat`, this setup is guided on its
@@ -155,7 +165,7 @@ Generate or review the snapshot independently from the earnings refresh:
 python scripts/update_sp500_companies.py
 ```
 
-The updater reads Wikipedia through the Wikimedia API, validates the table shape and a plausible constituent count, retains Finnhub's documented dot-form share-class symbol (for example `BRK.B`), accepts the hyphen variant as a compatibility alias, and records the source page revision and CC BY-SA attribution in the generated file. Review the diff before deployment; a failed update leaves the previous snapshot untouched.
+The updater reads Wikipedia through the Wikimedia API, validates the table shape and a plausible constituent count, merges the prior reviewed snapshot so removed securities retain a reviewed `validTo`, retains Finnhub's documented dot-form share-class symbol (for example `BRK.B`), accepts the hyphen variant as a compatibility alias, and records the source page revision and CC BY-SA attribution in the generated file. Review the diff before deployment; a failed update leaves the previous snapshot untouched.
 
 After deploying the schema, run the resumable seed from a controlled environment
 with the same production secrets. It checkpoints every 25 issuers and can be
@@ -167,6 +177,9 @@ python scripts/seed_earnings_market_caps.py --max-profiles 500
 
 The reviewed multi-share-class issuers use explicit calendar primaries in
 `sp500_companies.json`; preserve and review those flags when regenerating it.
+The scale-validation diagnostic requires a separate
+`FINNHUB_VALIDATION_API_KEY`; it refuses to run with the production key because
+diagnostic calls are not coordinated through the production Firestore limiter.
 
 ### 5. Run the API
 
@@ -240,9 +253,14 @@ User-owned and account feature routes require a Firebase bearer token. The healt
 | Method | Route | Rate limit | Description |
 | --- | --- | --- | --- |
 | `GET` | `/earnings-calendar/manifest` | 120/minute | Public freshness, coverage, and per-week revision metadata |
+| `GET` | `/earnings-calendar/health` | 30/minute | Uncached heartbeat; returns 503 when `checkedAt`/`refreshAfter` is overdue |
 | `GET` | `/earnings-calendar/weeks?start=YYYY-MM-DD&count=1&revision=<datasetRevision>` | 120/minute | Public lightweight Monday-Sunday calendar summaries; count is 1-6 and revision prevents stale snapshot reuse |
 | `GET` | `/earnings-calendar/weeks/<weekStart>/events/<eventId>/estimates?revision=<weekRevision>` | 120/minute | Public fiscal-period, EPS, and revenue estimates for one selected calendar event |
 | `POST` | `/internal/earnings-calendar/refresh` | 12/hour | Secret-protected Finnhub refresh and changed-only Firestore publish |
+
+The scheduled workflow verifies `/earnings-calendar/health` before pinging the
+configured external dead-man monitor. A conventional uptime monitor may also
+alert directly on a non-200 response from this endpoint.
 
 The weekly response intentionally excludes `fiscalYear`, `fiscalQuarter`,
 `epsEstimate`, and `revenueEstimate`. A refresh stores those fields in a

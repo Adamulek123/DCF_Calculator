@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+from email.utils import parsedate_to_datetime
 import hashlib
 import hmac
 import json
 import math
 import os
+import random
 import re
 import time
 import uuid
@@ -27,6 +29,7 @@ from flask import jsonify, make_response, request
 from earnings_market_caps import (
     CURRENCY_VALIDATION,
     PROFILE_URL,
+    PROVIDER_SEMANTICS_VERSION,
     MarketCapValidationError,
     assign_display_orders,
     boundary_issuer_ids,
@@ -77,6 +80,7 @@ DEFAULT_PROVIDER_REQUESTS_PER_MINUTE = 45
 DEFAULT_PROFILE_MAX_PER_RUN = 25
 DEFAULT_EXECUTION_MAX_SECONDS = 720
 PUBLICATION_RESERVE_SECONDS = 75
+MAX_MARKET_CAP_SNAPSHOT_JSON_BYTES = 900_000
 INGESTION_VERSION = 4
 MIN_INITIAL_MATCHED_EVENTS = 25
 MIN_MATCHED_RAW_RATIO = 0.02
@@ -128,6 +132,14 @@ class ProviderError(CalendarError):
 
 class ProviderValidationError(ProviderError):
     code = "provider_validation_failed"
+
+
+class ProviderBudgetExhausted(ProviderError):
+    code = "provider_budget_exhausted"
+
+
+class ProviderRateLimited(ProviderError):
+    code = "provider_rate_limited"
 
 
 class LeaseLost(CalendarUnavailable):
@@ -184,29 +196,40 @@ def _runtime_config(manual=False):
 
 def _provider_permission_metadata(require=None):
     """Load non-secret evidence fields; private correspondence stays external."""
-    require = (_is_render() or os.environ.get("GITHUB_ACTIONS") == "true") if require is None else require
+    development_mode = (
+        os.environ.get("EARNINGS_CALENDAR_DEVELOPMENT_MODE", "").strip().lower() == "true"
+    )
+    require = not development_mode if require is None else require
     confirmed = os.environ.get("EARNINGS_PROVIDER_PERMISSION_CONFIRMED", "").strip().lower() == "true"
     permission_date = os.environ.get("EARNINGS_PROVIDER_PERMISSION_DATE", "").strip()
     account_plan = os.environ.get("EARNINGS_PROVIDER_ACCOUNT_PLAN", "").strip()
     evidence_ref = os.environ.get("EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF", "").strip()
-    if require:
+    valid_permission_date = False
+    if permission_date:
         try:
             _parse_date(permission_date, "EARNINGS_PROVIDER_PERMISSION_DATE")
-        except ValueError as exc:
-            raise CalendarUnavailable("Provider permission date is not configured.") from exc
-        if not confirmed or not account_plan or not evidence_ref:
+            valid_permission_date = True
+        except ValueError:
+            valid_permission_date = False
+    permission_complete = bool(
+        confirmed and valid_permission_date and account_plan and evidence_ref
+    )
+    if require:
+        if not valid_permission_date:
+            raise CalendarUnavailable("Provider permission date is not configured.")
+        if not permission_complete:
             raise CalendarUnavailable("Provider permission evidence is incomplete.")
     return {
-        "confirmed": confirmed,
+        "confirmed": permission_complete,
         "permissionDate": permission_date or None,
         "accountPlan": account_plan or None,
         "evidenceReference": evidence_ref or None,
         "scope": {
-            "serverSideCaching": True,
-            "publicDisplay": True,
-            "ranking": True,
-            "redistribution": True,
-            "futureCoverageDays": 30,
+            "serverSideCaching": permission_complete,
+            "publicDisplay": permission_complete,
+            "ranking": permission_complete,
+            "redistribution": permission_complete,
+            "futureCoverageDays": 30 if permission_complete else 0,
         },
     }
 
@@ -263,6 +286,33 @@ def _hash_payload(payload):
         allow_nan=False,
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _snapshot_json_bytes(snapshot):
+    return len(json.dumps(snapshot, separators=(",", ":"), allow_nan=False).encode("utf-8"))
+
+
+def _validate_snapshot_size(snapshot):
+    size = _snapshot_json_bytes(snapshot)
+    if size > MAX_MARKET_CAP_SNAPSHOT_JSON_BYTES:
+        raise CalendarUnavailable("The market-cap snapshot is too large to publish safely.")
+    return size
+
+
+def _manifest_overdue(manifest, now=None):
+    now = now or _utc_now()
+    refresh_after = _parse_datetime((manifest or {}).get("refreshAfter"))
+    checked_at = _parse_datetime((manifest or {}).get("checkedAt"))
+    due_at = refresh_after or (checked_at + REFRESH_INTERVAL if checked_at else None)
+    return not due_at or now > due_at + REFRESH_INTERVAL
+
+
+def _currency_validation_is_current(constituent_version):
+    return (
+        CURRENCY_VALIDATION.get("constituentVersion") == constituent_version
+        and CURRENCY_VALIDATION.get("providerSemanticsVersion")
+        == PROVIDER_SEMANTICS_VERSION
+    )
 
 
 def _event_id(event):
@@ -431,6 +481,7 @@ class PersistentProviderLimiter:
         self.minimum_spacing = 60.0 / requests_per_minute
         self.lease_renewer = lease_renewer
         self.attempts = 0
+        self.attempts_by_type = defaultdict(int)
         self.wait_ms = 0
 
     def _reserve_once(self):
@@ -463,37 +514,74 @@ class PersistentProviderLimiter:
 
         return max(0.0, float(reserve(transaction)))
 
-    def acquire(self):
+    def acquire(self, request_type="provider"):
+        request_seconds = FINNHUB_CONNECT_TIMEOUT_SECONDS + FINNHUB_READ_TIMEOUT_SECONDS
         while True:
+            remaining = self.deadline - time.monotonic()
+            if remaining <= request_seconds:
+                raise ProviderBudgetExhausted(
+                    "Provider request budget exhausted before the publication reserve."
+                )
             if self.lease_renewer:
                 self.lease_renewer()
             wait_seconds = self._reserve_once()
             remaining = self.deadline - time.monotonic()
             if wait_seconds <= 0:
+                if remaining <= request_seconds:
+                    raise ProviderBudgetExhausted(
+                        "Provider request budget exhausted before the publication reserve."
+                    )
                 self.attempts += 1
+                self.attempts_by_type[request_type] += 1
                 return
-            if wait_seconds + FINNHUB_CONNECT_TIMEOUT_SECONDS + FINNHUB_READ_TIMEOUT_SECONDS >= remaining:
-                raise ProviderError("Provider request budget exhausted before the publication reserve.")
+            if wait_seconds + request_seconds >= remaining:
+                raise ProviderBudgetExhausted(
+                    "Provider request budget exhausted before the publication reserve."
+                )
             time.sleep(wait_seconds)
             self.wait_ms += round(wait_seconds * 1000)
 
     def defer(self, seconds):
-        seconds = max(0.0, min(float(seconds or 0), 300.0))
+        seconds = max(0.0, float(seconds or 0))
         if not seconds:
             return
         ref = self.db.collection(META_COLLECTION).document(RATE_STATE_DOCUMENT)
         ref.set({"blockedUntil": _iso_utc(_utc_now() + dt.timedelta(seconds=seconds))}, merge=True)
 
     def remaining_before_deadline(self):
-        return max(0, int((self.deadline - time.monotonic()) / self.minimum_spacing))
+        usable = self.deadline - time.monotonic() - (
+            FINNHUB_CONNECT_TIMEOUT_SECONDS + FINNHUB_READ_TIMEOUT_SECONDS
+        )
+        return max(0, int(usable / self.minimum_spacing))
+
+    def request_timeouts(self):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise ProviderBudgetExhausted(
+                "Provider request budget exhausted before the publication reserve."
+            )
+        connect_timeout = min(FINNHUB_CONNECT_TIMEOUT_SECONDS, max(0.5, remaining / 3))
+        read_timeout = min(FINNHUB_READ_TIMEOUT_SECONDS, max(0.5, remaining - connect_timeout))
+        return connect_timeout, read_timeout
 
 
-def _response_retry_after(response):
+def _response_retry_after(response, now=None):
     raw = str(response.headers.get("Retry-After") or "").strip()
     try:
         return max(0.0, float(raw))
     except ValueError:
-        return 0.0
+        try:
+            parsed = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        reference = now or _utc_now()
+        return max(0.0, (parsed.astimezone(dt.timezone.utc) - reference).total_seconds())
+
+
+def _provider_retry_delay(attempt):
+    return (0.25 * (2 ** attempt)) + random.uniform(0.0, 0.25)
 
 
 def fetch_finnhub_calendar(
@@ -519,14 +607,18 @@ def fetch_finnhub_calendar(
         }
         last_error = None
         for attempt in range(2):
-            remaining = deadline - time.monotonic()
-            if remaining <= 1:
-                raise ProviderError("Finnhub refresh exceeded its safe execution deadline.")
-            connect_timeout = min(FINNHUB_CONNECT_TIMEOUT_SECONDS, max(0.5, remaining / 3))
-            read_timeout = min(FINNHUB_READ_TIMEOUT_SECONDS, max(0.5, remaining - connect_timeout))
             try:
                 if limiter:
-                    limiter.acquire()
+                    limiter.acquire("calendar")
+                    connect_timeout, read_timeout = limiter.request_timeouts()
+                else:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= FINNHUB_CONNECT_TIMEOUT_SECONDS + FINNHUB_READ_TIMEOUT_SECONDS:
+                        raise ProviderBudgetExhausted(
+                            "Finnhub refresh exceeded its safe execution deadline."
+                        )
+                    connect_timeout = min(FINNHUB_CONNECT_TIMEOUT_SECONDS, max(0.5, remaining / 3))
+                    read_timeout = min(FINNHUB_READ_TIMEOUT_SECONDS, max(0.5, remaining - connect_timeout))
                 response = http_get(
                     FINNHUB_CALENDAR_URL,
                     params=params,
@@ -535,15 +627,15 @@ def fetch_finnhub_calendar(
             except requests.RequestException as exc:
                 last_error = exc
                 if attempt == 0:
-                    time.sleep(0.25)
+                    time.sleep(_provider_retry_delay(attempt))
                     continue
                 raise ProviderError("Finnhub could not be reached.") from exc
             if response.status_code == 429:
                 if limiter:
                     limiter.defer(_response_retry_after(response) or 60)
-                raise ProviderError("Finnhub rate-limited the refresh.")
+                raise ProviderRateLimited("calendar_rate_limited")
             if response.status_code >= 500 and attempt == 0:
-                time.sleep(0.25)
+                time.sleep(_provider_retry_delay(attempt))
                 continue
             if response.status_code != 200:
                 raise ProviderError(f"Finnhub returned HTTP {response.status_code}.")
@@ -568,18 +660,19 @@ def fetch_finnhub_profile(api_key, issuer, limiter, http_get=requests.get):
     """Fetch one reviewed issuer profile; one invocation is one provider attempt."""
     if not api_key:
         raise CalendarUnavailable("FINNHUB_API_KEY is not configured.")
-    limiter.acquire()
+    limiter.acquire("profile")
+    timeout = limiter.request_timeouts()
     try:
         response = http_get(
             PROFILE_URL,
             params={"symbol": issuer["primaryProviderSymbol"], "token": api_key},
-            timeout=(FINNHUB_CONNECT_TIMEOUT_SECONDS, FINNHUB_READ_TIMEOUT_SECONDS),
+            timeout=timeout,
         )
     except requests.RequestException as exc:
         raise ProviderError("profile_network_error") from exc
     if response.status_code == 429:
         limiter.defer(_response_retry_after(response) or 60)
-        raise ProviderError("profile_rate_limited")
+        raise ProviderRateLimited("profile_rate_limited")
     if response.status_code >= 500:
         raise ProviderError("profile_server_error")
     if response.status_code != 200:
@@ -891,6 +984,7 @@ def _get_week_documents(db, week_keys):
 
 def checkpoint_market_cap_snapshot(db, owner, snapshot, expected_storage_generation, now=None):
     """Generation-checked resumable seed checkpoint under the shared lease."""
+    _validate_snapshot_size(snapshot)
     now = now or _utc_now()
     lease_ref = db.collection(META_COLLECTION).document(LEASE_DOCUMENT)
     snapshot_ref = db.collection(META_COLLECTION).document(MARKET_CAP_DOCUMENT)
@@ -932,6 +1026,7 @@ def _publish_if_lease_owned(
     market_cap_snapshot,
     expected_storage_generation,
 ):
+    _validate_snapshot_size(market_cap_snapshot)
     lease_ref = db.collection(META_COLLECTION).document(LEASE_DOCUMENT)
     snapshot_ref = db.collection(META_COLLECTION).document(MARKET_CAP_DOCUMENT)
     transaction = db.transaction()
@@ -1089,21 +1184,22 @@ def refresh_earnings_calendar(
             future_days=config["futureCoverageDays"],
             boundary_ids=boundary_ids,
         )
-        validation_current = (
-            CURRENCY_VALIDATION.get("constituentVersion") == constituents["metadata"]["version"]
+        validation_current = _currency_validation_is_current(
+            constituents["metadata"]["version"]
         )
         if not validation_current:
             _log(
                 "earnings_market_cap_validation_outdated",
                 constituentVersion=constituents["metadata"]["version"],
                 validatedConstituentVersion=CURRENCY_VALIDATION.get("constituentVersion"),
+                providerSemanticsVersion=PROVIDER_SEMANTICS_VERSION,
+                validatedProviderSemanticsVersion=CURRENCY_VALIDATION.get(
+                    "providerSemanticsVersion"
+                ),
             )
         profile_queue = queue if validation_current else []
         profile_budget = min(config["profileMax"], limiter.remaining_before_deadline(), len(profile_queue))
         tier_labels = {1: "0-7", 2: "0-7", 3: "8-21", 4: "8-21", 5: "22-30", 6: "22-30", 7: "noEvent", 8: "noEvent"}
-        due_remaining_by_tier = defaultdict(int)
-        for queued in queue:
-            due_remaining_by_tier[tier_labels[queued["priority"]]] += 1
         near_term_ages = [
             (now - queued["retrievedAt"]).total_seconds() / 3600
             for queued in queue
@@ -1119,19 +1215,25 @@ def refresh_earnings_calendar(
             issuer_id = item["issuerId"]
             issuer = item["issuer"]
             attempted_at = _utc_now() if not explicit_now else now
-            profile_attempted += 1
             try:
                 profile = fetch_finnhub_profile(api_key, issuer, limiter, http_get=http_get)
                 candidate_snapshot["issuers"][issuer_id] = normalize_profile(profile, issuer, attempted_at)
                 profile_updated += 1
+            except ProviderBudgetExhausted:
+                break
+            except ProviderRateLimited as exc:
+                candidate_snapshot["issuers"][issuer_id] = failure_record(
+                    candidate_snapshot["issuers"].get(issuer_id), issuer, attempted_at, str(exc)
+                )
+                profile_failed += 1
+                stop_profiles = True
             except (ProviderError, ProviderValidationError, MarketCapValidationError) as exc:
                 code = str(exc) or getattr(exc, "code", "profile_failed")
                 candidate_snapshot["issuers"][issuer_id] = failure_record(
                     candidate_snapshot["issuers"].get(issuer_id), issuer, attempted_at, code
                 )
                 profile_failed += 1
-                if "rate_limited" in code:
-                    stop_profiles = True
+        profile_attempted = limiter.attempts_by_type["profile"]
 
         current_records = candidate_snapshot["issuers"]
         candidate_snapshot["currentIssuerMissingCount"] = sum(
@@ -1153,6 +1255,19 @@ def refresh_earnings_calendar(
         elif candidate_snapshot.get("lastCompleteSeedConstituentVersion") != constituents["metadata"]["version"]:
             candidate_snapshot["lastCompleteSeedAt"] = None
             candidate_snapshot["lastCompleteSeedConstituentVersion"] = None
+
+        remaining_queue = build_refresh_queue(
+            candidate_snapshot,
+            current_issuers,
+            events,
+            market_today,
+            now,
+            future_days=config["futureCoverageDays"],
+            boundary_ids=boundary_ids,
+        )
+        due_remaining_by_tier = defaultdict(int)
+        for queued in remaining_queue:
+            due_remaining_by_tier[tier_labels[queued["priority"]]] += 1
 
         built = build_week_documents(
             events,
@@ -1214,14 +1329,14 @@ def refresh_earnings_calendar(
             unchangedWeeks=unchanged_count,
             expiredWeeks=len(expired_keys),
             effectiveFutureCoverageDays=config["futureCoverageDays"],
-            calendarHttpAttempts=limiter.attempts - profile_attempted,
+            calendarHttpAttempts=limiter.attempts_by_type["calendar"],
             profileBudget=profile_budget,
             profileAttempted=profile_attempted,
             profileUpdated=profile_updated,
             profileFailed=profile_failed,
             missingBefore=missing_before,
             missingAfter=candidate_snapshot["currentIssuerMissingCount"],
-            staleDueRemaining=max(0, len(queue) - profile_attempted),
+            staleDueRemaining=len(remaining_queue),
             dueRemainingByTier=dict(sorted(due_remaining_by_tier.items())),
             oldestNearTermAgeHours=round(max(near_term_ages), 1) if near_term_ages else None,
             providerElapsedMs=round((time.monotonic() - started_monotonic) * 1000),
@@ -1323,6 +1438,35 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
             _hash_payload(payload),
             "public, max-age=900, stale-while-revalidate=3600",
         )
+
+    @app.route("/earnings-calendar/health", methods=["GET"])
+    @limiter.limit("30 per minute", override_defaults=True)
+    def earnings_calendar_health():
+        db = db_getter()
+        if db is None:
+            return _unavailable_response()
+        try:
+            manifest = _get_manifest(db)
+        except Exception as exc:
+            _log("earnings_calendar_read_failed", route="health", error=type(exc).__name__)
+            return _unavailable_response("The earnings calendar heartbeat could not be read.")
+        if not manifest or _manifest_overdue(manifest):
+            response = jsonify({
+                "status": "overdue",
+                "checkedAt": _iso_utc((manifest or {}).get("checkedAt")),
+                "refreshAfter": _iso_utc((manifest or {}).get("refreshAfter")),
+            })
+            response.status_code = 503
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Retry-After"] = "900"
+            return response
+        response = jsonify({
+            "status": "ok",
+            "checkedAt": _iso_utc(manifest.get("checkedAt")),
+            "refreshAfter": _iso_utc(manifest.get("refreshAfter")),
+        })
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.route("/earnings-calendar/weeks", methods=["GET"])
     @limiter.limit("120 per minute", override_defaults=True)

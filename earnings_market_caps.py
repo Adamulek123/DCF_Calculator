@@ -21,6 +21,7 @@ PROVIDER_SEMANTICS_VERSION = 1
 CURRENCY_VALIDATION_VERSION = "sp500-full-universe-v1"
 CURRENCY_VALIDATION = {
     "constituentVersion": "2026-07-22",
+    "providerSemanticsVersion": PROVIDER_SEMANTICS_VERSION,
     "listingCount": 503,
     "successfulListingCount": 503,
     "usdAlignedCount": 498,
@@ -152,12 +153,9 @@ def normalize_profile(profile, issuer, retrieved_at):
     if returned_symbol not in issuer["providerSymbols"]:
         raise MarketCapValidationError("unexpected_ticker")
     value = profile.get("marketCapitalization")
-    if value is None or isinstance(value, bool):
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise MarketCapValidationError("missing_market_cap")
-    try:
-        market_cap_millions = float(value)
-    except (TypeError, ValueError) as exc:
-        raise MarketCapValidationError("invalid_market_cap") from exc
+    market_cap_millions = float(value)
     if not math.isfinite(market_cap_millions) or market_cap_millions <= 0:
         raise MarketCapValidationError("invalid_market_cap")
     return {
@@ -200,9 +198,13 @@ def profile_scale_evidence(profile):
 
 def failure_record(previous, issuer, attempted_at, error_code):
     record = dict(previous or {})
+    successful_provider_symbol = record.get("providerSymbol") if _valid_market_cap(
+        record.get("marketCapMillions")
+    ) else None
     record.update({
         "symbol": issuer["symbol"],
-        "providerSymbol": issuer["primaryProviderSymbol"],
+        "providerSymbol": successful_provider_symbol or issuer["primaryProviderSymbol"],
+        "requestedProviderSymbol": issuer["primaryProviderSymbol"],
         "providerSymbols": issuer["providerSymbols"],
         "constituentSymbols": issuer["constituentSymbols"],
         "lastAttemptAt": iso_utc(attempted_at),
@@ -288,6 +290,13 @@ def _cooldown(failures):
     return dt.timedelta(days=3)
 
 
+def profile_attempt_due(record, now):
+    record = record if isinstance(record, dict) else {}
+    last_attempt = parse_datetime(record.get("lastAttemptAt"))
+    failures = max(0, int(record.get("consecutiveFailures") or 0))
+    return not last_attempt or now >= last_attempt + _cooldown(failures)
+
+
 def _relevant_report_date(event_dates, market_today):
     future = sorted(value for value in event_dates if value >= market_today)
     if future:
@@ -315,8 +324,7 @@ def build_refresh_queue(snapshot, current_issuers, events, market_today, now, fu
     for issuer_id, issuer in current_issuers.items():
         record = records.get(issuer_id) or {}
         last_attempt = parse_datetime(record.get("lastAttemptAt"))
-        failures = max(0, int(record.get("consecutiveFailures") or 0))
-        if last_attempt and now < last_attempt + _cooldown(failures):
+        if not profile_attempt_due(record, now):
             continue
         report_date = _relevant_report_date(dates_by_issuer.get(issuer_id, []), market_today)
         days = (report_date - market_today).days if report_date else None

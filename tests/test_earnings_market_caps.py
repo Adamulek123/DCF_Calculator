@@ -1,10 +1,14 @@
 import datetime as dt
 import json
 import math
+import os
 from pathlib import Path
 import unittest
+from unittest import mock
 
 import earnings_market_caps as caps
+from scripts import update_sp500_companies as constituent_update
+from scripts import seed_earnings_market_caps as seed
 
 
 UTC = dt.timezone.utc
@@ -59,6 +63,19 @@ class IssuerTests(unittest.TestCase):
                 dt.date(2026, 8, 3),
             )
 
+    def test_constituent_update_retains_removed_security_with_reviewed_end_date(self):
+        current = [{"symbol": "NEW", "validFrom": "2026-01-01", "validTo": None}]
+        previous = {"companies": [
+            {"symbol": "OLD", "validFrom": "2020-01-01", "validTo": None},
+            {"symbol": "OLDER", "validFrom": "2010-01-01", "validTo": "2020-12-31"},
+        ]}
+        merged = constituent_update.merge_historical_companies(
+            current, previous, dt.date(2026, 8, 3)
+        )
+        by_symbol = {item["symbol"]: item for item in merged}
+        self.assertEqual(by_symbol["OLD"]["validTo"], "2026-08-02")
+        self.assertEqual(by_symbol["OLDER"]["validTo"], "2020-12-31")
+
 
 class ProfileTests(unittest.TestCase):
     def setUp(self):
@@ -96,10 +113,11 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(evidence["constituentVersion"], "2026-07-22")
         self.assertEqual(evidence["usdAlignedCount"], 498)
         self.assertEqual(evidence["nonUsdEvidenceCount"], 0)
+        self.assertEqual(evidence["providerSemanticsVersion"], caps.PROVIDER_SEMANTICS_VERSION)
         self.assertEqual(evidence["inconclusiveSymbols"], ["ARES", "BRK.B", "CHTR", "CPT", "FDX"])
 
     def test_invalid_market_caps_are_rejected(self):
-        for value in (0, -1, "bad", math.nan, math.inf, None):
+        for value in (0, -1, "bad", "123.5", " 123.5 ", [], {}, math.nan, math.inf, None):
             with self.subTest(value=value), self.assertRaises(caps.MarketCapValidationError):
                 caps.normalize_profile(
                     {"ticker": "AAPL", "marketCapitalization": value}, self.issuer, self.now
@@ -127,6 +145,67 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(first, caps.snapshot_content_revision(snapshot))
         snapshot["issuers"]["1"]["marketCapMillions"] = 11
         self.assertNotEqual(first, caps.snapshot_content_revision(snapshot))
+
+    def test_alias_success_followed_by_failure_keeps_content_revision(self):
+        alias_issuer = {
+            **self.issuer,
+            "symbol": "BRK.B",
+            "primaryProviderSymbol": "BRK.B",
+            "providerSymbols": ["BRK.B", "BRK-B"],
+            "constituentSymbols": ["BRK.B"],
+        }
+        record = caps.normalize_profile(
+            {"ticker": "BRK-B", "marketCapitalization": 100}, alias_issuer, self.now
+        )
+        snapshot = caps.reconcile_snapshot({}, {"1": alias_issuer}, "v1")
+        snapshot["issuers"]["1"] = record
+        first = caps.snapshot_content_revision(snapshot)
+        snapshot["issuers"]["1"] = caps.failure_record(
+            record, alias_issuer, self.now + dt.timedelta(hours=1), "profile_server_error"
+        )
+        self.assertEqual(snapshot["issuers"]["1"]["providerSymbol"], "BRK-B")
+        self.assertEqual(snapshot["issuers"]["1"]["requestedProviderSymbol"], "BRK.B")
+        self.assertEqual(first, caps.snapshot_content_revision(snapshot))
+
+    def test_retained_removed_issuer_survives_until_no_longer_referenced(self):
+        removed = issuer("removed", "OLD")
+        stored = caps.reconcile_snapshot({}, {"removed": removed}, "v1")
+        stored["issuers"]["removed"]["marketCapMillions"] = 42
+        retained = caps.reconcile_snapshot(stored, {}, "v2", {"removed"})
+        self.assertEqual(retained["issuers"]["removed"]["marketCapMillions"], 42)
+        pruned = caps.reconcile_snapshot(retained, {}, "v2")
+        self.assertNotIn("removed", pruned["issuers"])
+
+
+class SeedTests(unittest.TestCase):
+    def test_exact_checkpoint_boundary_still_finalizes_completeness(self):
+        issuers = {"1": issuer("1", "ONE")}
+        snapshot = caps.reconcile_snapshot({}, issuers, "v1")
+        snapshot["issuers"]["1"]["marketCapMillions"] = 10
+        changed = seed.finalize_seed_metadata(
+            snapshot,
+            issuers,
+            "v1",
+            dt.datetime(2026, 8, 3, tzinfo=UTC),
+        )
+        self.assertTrue(changed)
+        self.assertEqual(snapshot["lastCompleteSeedConstituentVersion"], "v1")
+        self.assertEqual(snapshot["lastCompleteSeedAt"], "2026-08-03T00:00:00Z")
+
+    def test_production_seed_requires_permission_before_firestore(self):
+        args = mock.Mock(force=False, max_profiles=1, checkpoint_size=1)
+        relevant = {
+            "EARNINGS_PROVIDER_PERMISSION_CONFIRMED": "",
+            "EARNINGS_PROVIDER_PERMISSION_DATE": "",
+            "EARNINGS_PROVIDER_ACCOUNT_PLAN": "",
+            "EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF": "",
+        }
+        with mock.patch.dict(os.environ, relevant, clear=False), \
+                mock.patch.object(seed, "parse_args", return_value=args), \
+                mock.patch.object(seed, "firestore_client") as firestore_client:
+            with self.assertRaises(seed.calendar.CalendarUnavailable):
+                seed.main()
+        firestore_client.assert_not_called()
 
 
 class QueueTests(unittest.TestCase):
