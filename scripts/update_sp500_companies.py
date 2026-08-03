@@ -34,6 +34,11 @@ EXPECTED_HEADERS = {
 }
 FOOTNOTE_RE = re.compile(r"\[[^\]]*\]")
 WHITESPACE_RE = re.compile(r"\s+")
+REVIEWED_CALENDAR_PRIMARIES = {
+    "0001652044": "GOOGL",
+    "0001754301": "FOXA",
+    "0001564708": "NWSA",
+}
 
 
 class ConstituentScrapeError(RuntimeError):
@@ -182,6 +187,19 @@ def normalize_records(records):
         raise ConstituentScrapeError(f"Implausible S&P 500 security count: {len(companies)}.")
     if len({company["sector"] for company in companies}) < 10:
         raise ConstituentScrapeError("Wikipedia returned an implausibly small set of GICS sectors.")
+    by_cik = {}
+    for company in companies:
+        by_cik.setdefault(company["cik"], []).append(company)
+    for cik, securities in by_cik.items():
+        reviewed_symbol = REVIEWED_CALENDAR_PRIMARIES.get(cik)
+        if len(securities) > 1 and reviewed_symbol not in {item["symbol"] for item in securities}:
+            raise ConstituentScrapeError(
+                f"Multi-security issuer {cik} needs a reviewed calendar primary."
+            )
+        if reviewed_symbol:
+            for security in securities:
+                if security["symbol"] == reviewed_symbol:
+                    security["calendarPrimary"] = True
     return sorted(companies, key=lambda company: company["symbol"])
 
 

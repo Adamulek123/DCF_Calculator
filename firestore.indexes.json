@@ -1,0 +1,10 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "earnings_calendar",
+      "fieldPath": "issuers",
+      "indexes": []
+    }
+  ]
+}

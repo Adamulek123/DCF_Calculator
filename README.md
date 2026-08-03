@@ -95,7 +95,7 @@ Never commit the JSON credential, its decoded private key, or the environment-va
 
 ### 4. Configure the earnings calendar
 
-The earnings-calendar refresh is isolated in `earnings_calendar.py`. It requests Finnhub in seven-day windows so the provider's capped response cannot silently omit the earlier part of the four-month coverage range. It requires two server-only environment variables:
+The earnings-calendar refresh is isolated in `earnings_calendar.py`. It requests Finnhub in seven-day windows, publishes four historical weeks plus the provider-approved 30-day future horizon, and ranks each date/session lane by a cached last-observed Profile 2 market capitalization. It requires two server-only secrets:
 
 ```text
 FINNHUB_API_KEY=<Finnhub API token>
@@ -122,6 +122,24 @@ if the file is absent, local environment variables remain supported. Render
 never reads the local file, even if one is accidentally present in its working
 directory. Do not put either secret in frontend files.
 
+Production refreshes also require non-secret permission evidence variables.
+They are validated before any provider request; private correspondence must
+remain outside the repository.
+
+```text
+EARNINGS_PROVIDER_PERMISSION_CONFIRMED=true
+EARNINGS_PROVIDER_PERMISSION_DATE=YYYY-MM-DD
+EARNINGS_PROVIDER_ACCOUNT_PLAN=<approved account or plan label>
+EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF=<internal correspondence reference>
+```
+
+GitHub Actions runs `scripts/run_earnings_calendar_refresh.py` every four hours.
+Calendar and profile attempts share a persisted 45-per-rolling-minute limiter,
+a renewable Firestore lease, and a 12-minute execution budget. Configure the
+two secrets and four permission variables in the backend repository before
+running the workflow. Deploy `firestore.indexes.json` once so the compact
+`issuers` map is exempt from indexing.
+
 When using the workspace-root `start_backend.bat`, this setup is guided on its
 first run: the launcher creates the ignored file, generates the local refresh
 secret, and opens the file so you only need to paste the Finnhub key. It then
@@ -138,6 +156,17 @@ python scripts/update_sp500_companies.py
 ```
 
 The updater reads Wikipedia through the Wikimedia API, validates the table shape and a plausible constituent count, retains Finnhub's documented dot-form share-class symbol (for example `BRK.B`), accepts the hyphen variant as a compatibility alias, and records the source page revision and CC BY-SA attribution in the generated file. Review the diff before deployment; a failed update leaves the previous snapshot untouched.
+
+After deploying the schema, run the resumable seed from a controlled environment
+with the same production secrets. It checkpoints every 25 issuers and can be
+rerun safely:
+
+```bash
+python scripts/seed_earnings_market_caps.py --max-profiles 500
+```
+
+The reviewed multi-share-class issuers use explicit calendar primaries in
+`sp500_companies.json`; preserve and review those flags when regenerating it.
 
 ### 5. Run the API
 
@@ -229,14 +258,18 @@ Deploy and refresh the backend before publishing a frontend that expects the
 estimate endpoint. Ingestion schema upgrades force every advertised week to be
 rewritten even when the provider data itself is unchanged.
 
-Configure cron-job.org to make the following call every four hours. Use its test-run feature once after the backend deployment to seed Firestore, confirm that the public manifest contains events, and only then deploy the frontend navigation:
+The GitHub Actions workflow is the sole normal scheduler. Keep the HTTP route
+only as a measured manual fallback:
 
 ```http
 POST https://dcf-backend.onrender.com/internal/earnings-calendar/refresh
 Authorization: Bearer <EARNINGS_REFRESH_SECRET>
 ```
 
-Use HTTPS, keep the secret in the request header, disable response-body retention where practical, and enable failure/recovery notifications. A real refresh failure returns a non-2xx response.
+Use HTTPS and keep the secret in the request header. Do not keep an external
+HTTP scheduler enabled after two successful scheduled Actions runs; redundant
+schedulers waste the shared provider budget even though the lease prevents
+overlap. A real manual refresh failure returns a non-2xx response.
 
 ### Market and financial data
 

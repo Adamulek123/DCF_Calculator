@@ -2362,6 +2362,7 @@
       "providerSymbols": {
         "finnhub": "FOXA"
       },
+      "calendarPrimary": true,
       "name": "Fox Corporation (Class A)",
       "sector": "Communication Services",
       "industry": "Broadcasting",
@@ -2578,6 +2579,7 @@
       "providerSymbols": {
         "finnhub": "GOOGL"
       },
+      "calendarPrimary": true,
       "name": "Alphabet Inc. (Class A)",
       "sector": "Communication Services",
       "industry": "Interactive Media & Services",
@@ -4150,6 +4152,7 @@
       "providerSymbols": {
         "finnhub": "NWSA"
       },
+      "calendarPrimary": true,
       "name": "News Corp (Class A)",
       "sector": "Communication Services",
       "industry": "Publishing",

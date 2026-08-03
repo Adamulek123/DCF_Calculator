@@ -1,0 +1,41 @@
+name: Refresh earnings calendar
+
+on:
+  schedule:
+    - cron: "17 */4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: earnings-calendar-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Test earnings ingestion
+        run: python -m unittest tests.test_earnings_market_caps tests.test_earnings_calendar
+      - name: Refresh calendar
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT_KEY_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 }}
+          EARNINGS_FUTURE_COVERAGE_DAYS: "30"
+          EARNINGS_PROVIDER_SUPPORTED_FUTURE_DAYS: "30"
+          EARNINGS_PROVIDER_REQUESTS_PER_MINUTE: "45"
+          EARNINGS_PROFILE_MAX_PER_RUN: "25"
+          EARNINGS_EXECUTION_MAX_SECONDS: "720"
+          EARNINGS_PROVIDER_PERMISSION_CONFIRMED: ${{ vars.EARNINGS_PROVIDER_PERMISSION_CONFIRMED }}
+          EARNINGS_PROVIDER_PERMISSION_DATE: ${{ vars.EARNINGS_PROVIDER_PERMISSION_DATE }}
+          EARNINGS_PROVIDER_ACCOUNT_PLAN: ${{ vars.EARNINGS_PROVIDER_ACCOUNT_PLAN }}
+          EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF: ${{ vars.EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF }}
+        run: python scripts/run_earnings_calendar_refresh.py
