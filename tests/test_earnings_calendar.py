@@ -643,6 +643,36 @@ class HistoricalSnapshotTests(unittest.TestCase):
         with self.assertRaises(earnings_calendar.HistoricalSnapshotInvalid):
             self.validate({"2026-07-20": invalid}, {"2026-07-20": self.estimates})
 
+    def test_legacy_documents_preserve_published_lane_order_during_v4_migration(self):
+        manifest = {**self.manifest, "ingestionVersion": 3}
+        week = {
+            **self.week,
+            "events": [
+                {**self.week["events"][0], "eventId": "event-z", "displayOrder": None},
+                {**self.week["events"][0], "eventId": "event-a", "displayOrder": None},
+                {
+                    **self.week["events"][0],
+                    "eventId": "event-after",
+                    "session": "after_close",
+                    "displayOrder": None,
+                },
+            ],
+        }
+
+        earnings_calendar._migrate_legacy_display_orders(manifest, {"2026-07-20": week})
+
+        self.assertEqual(
+            [event["displayOrder"] for event in week["events"]],
+            [1, 2, 1],
+        )
+        earnings_calendar._validate_historical_documents(
+            manifest,
+            {"2026-07-20": week},
+            {"2026-07-20": self.estimates},
+            {"2026-07-20"},
+            dt.date(2026, 8, 3),
+        )
+
 
 class RefreshCliTests(unittest.TestCase):
     def test_success_and_benign_noop_statuses_exit_zero(self):

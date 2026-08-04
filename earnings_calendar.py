@@ -1239,6 +1239,24 @@ def _symbols_from_retained_weeks(previous_documents, retained_week_keys):
     }
 
 
+def _migrate_legacy_display_orders(previous_manifest, week_documents):
+    """Preserve each legacy lane's published list order during the v4 rewrite."""
+    if int((previous_manifest or {}).get("ingestionVersion") or 0) >= INGESTION_VERSION:
+        return
+
+    for document in (week_documents or {}).values():
+        events = document.get("events") if isinstance(document, dict) else None
+        if not isinstance(events, list):
+            continue
+        lane_positions = defaultdict(int)
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            lane_key = (event.get("reportDate"), frontend_lane(event.get("session")))
+            lane_positions[lane_key] += 1
+            event["displayOrder"] = lane_positions[lane_key]
+
+
 def _validate_historical_documents(
     previous_manifest,
     week_documents,
@@ -1469,6 +1487,7 @@ def refresh_earnings_calendar(
         retained_week_keys = previous_week_keys.intersection(
             week.isoformat() for week in _iter_week_starts(coverage_start, coverage_end)
         )
+        _migrate_legacy_display_orders(previous_manifest, previous_documents)
         _validate_historical_documents(
             previous_manifest,
             previous_documents,
