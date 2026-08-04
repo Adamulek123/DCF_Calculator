@@ -1,0 +1,12 @@
+{
+  "providerSemanticsVersion": 1,
+  "scale": 1000000,
+  "validatedAt": "2026-08-02",
+  "symbols": {
+    "AAPL": {"independentToFinnhubRatio": 993656, "differencePercent": 0.64},
+    "MSFT": {"independentToFinnhubRatio": 1000000, "differencePercent": 0.0},
+    "NVDA": {"independentToFinnhubRatio": 1000000, "differencePercent": 0.0},
+    "JPM": {"independentToFinnhubRatio": 1000000, "differencePercent": 0.0},
+    "AMZN": {"independentToFinnhubRatio": 1002715, "differencePercent": 0.27}
+  }
+}

@@ -95,7 +95,7 @@ Never commit the JSON credential, its decoded private key, or the environment-va
 
 ### 4. Configure the earnings calendar
 
-The earnings-calendar refresh is isolated in `earnings_calendar.py`. It requests Finnhub in seven-day windows so the provider's capped response cannot silently omit the earlier part of the four-month coverage range. It requires two server-only environment variables:
+The earnings-calendar refresh is isolated in `earnings_calendar.py`. It requests Finnhub in seven-day windows, publishes four historical weeks plus the provider-approved 30-day future horizon, and ranks each date/session lane by a cached last-observed Profile 2 market capitalization. It requires two server-only secrets:
 
 ```text
 FINNHUB_API_KEY=<Finnhub API token>
@@ -122,6 +122,36 @@ if the file is absent, local environment variables remain supported. Render
 never reads the local file, even if one is accidentally present in its working
 directory. Do not put either secret in frontend files.
 
+Production refreshes also require non-secret permission evidence variables.
+They are validated before any provider request; private correspondence must
+remain outside the repository.
+
+```text
+EARNINGS_PROVIDER_PERMISSION_CONFIRMED=true
+EARNINGS_PROVIDER_PERMISSION_DATE=YYYY-MM-DD
+EARNINGS_PROVIDER_ACCOUNT_PLAN=<approved account or plan label>
+EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF=<internal correspondence reference>
+```
+
+Permission evidence is required on every host by default. Local emulator-only
+refreshes must opt in explicitly with `EARNINGS_CALENDAR_DEVELOPMENT_MODE=true`;
+development metadata never advertises caching, display, ranking, or
+redistribution permission when confirmation is absent.
+
+GitHub Actions runs `scripts/run_earnings_calendar_refresh.py` every four hours
+when the repository variable `EARNINGS_REFRESH_ENABLED` is set to `true`. Keep
+it unset or `false` during initial deployment, seeding, and manual verification.
+Calendar and profile attempts share a persisted 45-per-rolling-minute limiter,
+a renewable Firestore lease, and a 12-minute execution budget. Configure the
+two secrets and four permission variables in the backend repository before
+running the workflow. Also configure `EARNINGS_HEARTBEAT_URL` as the secret
+ping URL from an external dead-man monitoring service. After each successful
+refresh the workflow verifies the public `checkedAt` heartbeat and pings that
+service; a delayed, failed, dropped, or inactivity-disabled schedule therefore
+misses its external deadline and alerts independently of GitHub. Deploy
+`firestore.indexes.json` once so the compact
+`issuers` map is exempt from indexing.
+
 When using the workspace-root `start_backend.bat`, this setup is guided on its
 first run: the launcher creates the ignored file, generates the local refresh
 secret, and opens the file so you only need to paste the Finnhub key. It then
@@ -137,7 +167,21 @@ Generate or review the snapshot independently from the earnings refresh:
 python scripts/update_sp500_companies.py
 ```
 
-The updater reads Wikipedia through the Wikimedia API, validates the table shape and a plausible constituent count, retains Finnhub's documented dot-form share-class symbol (for example `BRK.B`), accepts the hyphen variant as a compatibility alias, and records the source page revision and CC BY-SA attribution in the generated file. Review the diff before deployment; a failed update leaves the previous snapshot untouched.
+The updater reads Wikipedia through the Wikimedia API, validates the table shape and a plausible constituent count, merges the prior reviewed snapshot so removed securities retain a reviewed `validTo`, retains Finnhub's documented dot-form share-class symbol (for example `BRK.B`), accepts the hyphen variant as a compatibility alias, and records the source page revision and CC BY-SA attribution in the generated file. Review the diff before deployment; a failed update leaves the previous snapshot untouched.
+
+After deploying the schema, run the resumable seed from a controlled environment
+with the same production secrets. It checkpoints every 25 issuers and can be
+rerun safely:
+
+```bash
+python scripts/seed_earnings_market_caps.py --max-profiles 500
+```
+
+The reviewed multi-share-class issuers use explicit calendar primaries in
+`sp500_companies.json`; preserve and review those flags when regenerating it.
+The scale-validation diagnostic requires a separate
+`FINNHUB_VALIDATION_API_KEY`; it refuses to run with the production key because
+diagnostic calls are not coordinated through the production Firestore limiter.
 
 ### 5. Run the API
 
@@ -211,9 +255,14 @@ User-owned and account feature routes require a Firebase bearer token. The healt
 | Method | Route | Rate limit | Description |
 | --- | --- | --- | --- |
 | `GET` | `/earnings-calendar/manifest` | 120/minute | Public freshness, coverage, and per-week revision metadata |
+| `GET` | `/earnings-calendar/health` | 30/minute | Uncached heartbeat; returns 503 when `checkedAt`/`refreshAfter` is overdue |
 | `GET` | `/earnings-calendar/weeks?start=YYYY-MM-DD&count=1&revision=<datasetRevision>` | 120/minute | Public lightweight Monday-Sunday calendar summaries; count is 1-6 and revision prevents stale snapshot reuse |
 | `GET` | `/earnings-calendar/weeks/<weekStart>/events/<eventId>/estimates?revision=<weekRevision>` | 120/minute | Public fiscal-period, EPS, and revenue estimates for one selected calendar event |
 | `POST` | `/internal/earnings-calendar/refresh` | 12/hour | Secret-protected Finnhub refresh and changed-only Firestore publish |
+
+The scheduled workflow verifies `/earnings-calendar/health` before pinging the
+configured external dead-man monitor. A conventional uptime monitor may also
+alert directly on a non-200 response from this endpoint.
 
 The weekly response intentionally excludes `fiscalYear`, `fiscalQuarter`,
 `epsEstimate`, and `revenueEstimate`. A refresh stores those fields in a
@@ -229,14 +278,18 @@ Deploy and refresh the backend before publishing a frontend that expects the
 estimate endpoint. Ingestion schema upgrades force every advertised week to be
 rewritten even when the provider data itself is unchanged.
 
-Configure cron-job.org to make the following call every four hours. Use its test-run feature once after the backend deployment to seed Firestore, confirm that the public manifest contains events, and only then deploy the frontend navigation:
+The GitHub Actions workflow is the sole normal scheduler. Keep the HTTP route
+only as a measured manual fallback:
 
 ```http
 POST https://dcf-backend.onrender.com/internal/earnings-calendar/refresh
 Authorization: Bearer <EARNINGS_REFRESH_SECRET>
 ```
 
-Use HTTPS, keep the secret in the request header, disable response-body retention where practical, and enable failure/recovery notifications. A real refresh failure returns a non-2xx response.
+Use HTTPS and keep the secret in the request header. Do not keep an external
+HTTP scheduler enabled after two successful scheduled Actions runs; redundant
+schedulers waste the shared provider budget even though the lease prevents
+overlap. A real manual refresh failure returns a non-2xx response.
 
 ### Market and financial data
 
