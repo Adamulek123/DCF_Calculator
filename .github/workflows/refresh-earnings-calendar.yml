@@ -28,7 +28,7 @@ jobs:
         run: python -m unittest tests.test_earnings_market_caps tests.test_earnings_calendar
 
   refresh:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && vars.EARNINGS_REFRESH_ENABLED == 'true'
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 25

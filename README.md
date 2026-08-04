@@ -138,7 +138,9 @@ refreshes must opt in explicitly with `EARNINGS_CALENDAR_DEVELOPMENT_MODE=true`;
 development metadata never advertises caching, display, ranking, or
 redistribution permission when confirmation is absent.
 
-GitHub Actions runs `scripts/run_earnings_calendar_refresh.py` every four hours.
+GitHub Actions runs `scripts/run_earnings_calendar_refresh.py` every four hours
+when the repository variable `EARNINGS_REFRESH_ENABLED` is set to `true`. Keep
+it unset or `false` during initial deployment, seeding, and manual verification.
 Calendar and profile attempts share a persisted 45-per-rolling-minute limiter,
 a renewable Firestore lease, and a 12-minute execution budget. Configure the
 two secrets and four permission variables in the backend repository before
