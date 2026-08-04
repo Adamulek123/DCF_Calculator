@@ -364,7 +364,7 @@ def build_refresh_queue(snapshot, current_issuers, events, market_today, now, fu
             "lastAttemptAt": last_attempt,
             "maximumAgeOverdueBySeconds": (
                 max(0.0, (now - (retrieved + max_age)).total_seconds())
-                if not missing and retrieved else 0.0
+                if not missing and retrieved else (math.inf if not missing else 0.0)
             ),
         })
 
@@ -380,7 +380,7 @@ def build_refresh_queue(snapshot, current_issuers, events, market_today, now, fu
 
 
 def select_refresh_queue(queue, budget, overdue_fraction=0.1):
-    """Reserve bounded capacity for the oldest maximum-age-overdue issuers."""
+    """Keep urgent work first while reserving spare capacity for old records."""
     budget = max(0, min(int(budget), len(queue)))
     if budget == 0:
         return []
@@ -388,11 +388,19 @@ def select_refresh_queue(queue, budget, overdue_fraction=0.1):
         (item for item in queue if item.get("maximumAgeOverdueBySeconds", 0) > 0),
         key=lambda item: (-item["maximumAgeOverdueBySeconds"], item["issuer"]["symbol"]),
     )
-    reserved_count = min(len(overdue), max(1, math.ceil(budget * overdue_fraction)))
+    urgent_quota = min(sum(item.get("priority") == 1 for item in queue), 1)
+    reserved_count = min(
+        len(overdue),
+        max(0, budget - urgent_quota),
+        max(1, math.ceil(budget * overdue_fraction)),
+    )
     reserved = overdue[:reserved_count]
     reserved_ids = {item["issuerId"] for item in reserved}
     regular = [item for item in queue if item["issuerId"] not in reserved_ids]
-    return reserved + regular[:budget - reserved_count]
+    selected_ids = {
+        item["issuerId"] for item in reserved + regular[:budget - reserved_count]
+    }
+    return [item for item in queue if item["issuerId"] in selected_ids]
 
 
 def boundary_issuer_ids(events, snapshot, market_today):

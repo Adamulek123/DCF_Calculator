@@ -84,6 +84,8 @@ DEFAULT_PROFILE_MAX_PER_RUN = 25
 DEFAULT_EXECUTION_MAX_SECONDS = 720
 PUBLICATION_RESERVE_SECONDS = 75
 MAX_MARKET_CAP_SNAPSHOT_JSON_BYTES = 650_000
+MAX_FIRESTORE_DOCUMENT_BYTES = 900_000
+MAX_PUBLICATION_TRANSACTION_BYTES = 8_000_000
 SCHEDULED_REFRESH_TOLERANCE = dt.timedelta(minutes=30)
 MIN_PUBLICATION_SECONDS = 5.0
 INGESTION_VERSION = 4
@@ -309,11 +311,40 @@ def _snapshot_json_bytes(snapshot):
     return len(json.dumps(snapshot, separators=(",", ":"), allow_nan=False).encode("utf-8"))
 
 
+def _firestore_document_bytes(document, name="sizing/document"):
+    """Return the pinned SDK's encoded Document protobuf size."""
+    try:
+        from google.cloud.firestore_v1 import _helpers
+        from google.cloud.firestore_v1.types import Document
+    except ImportError:
+        return None
+    encoded = Document(name=name, fields=_helpers.encode_dict(document))
+    return encoded._pb.ByteSize()
+
+
 def _validate_snapshot_size(snapshot):
     size = _snapshot_json_bytes(snapshot)
     if size > MAX_MARKET_CAP_SNAPSHOT_JSON_BYTES:
         raise CalendarUnavailable("The market-cap snapshot is too large to publish safely.")
+    encoded_size = _firestore_document_bytes(snapshot)
+    if encoded_size is not None and encoded_size > MAX_FIRESTORE_DOCUMENT_BYTES:
+        raise CalendarUnavailable("The encoded market-cap snapshot is too large to publish safely.")
     return size
+
+
+def _validate_publication_transaction_size(
+    documents, estimate_documents, changed_keys, manifest, market_cap_snapshot
+):
+    payloads = [manifest, market_cap_snapshot]
+    for week_key in changed_keys:
+        payloads.extend((documents[week_key], estimate_documents[week_key]))
+    encoded_sizes = [_firestore_document_bytes(payload) for payload in payloads]
+    if all(size is not None for size in encoded_sizes):
+        total = sum(encoded_sizes)
+        if total > MAX_PUBLICATION_TRANSACTION_BYTES:
+            raise CalendarUnavailable("The encoded publication transaction is too large.")
+        return total
+    return None
 
 
 def _remaining_execution_seconds(deadline):
@@ -523,16 +554,21 @@ class PersistentProviderLimiter:
         self.wait_ms = 0
 
     def _reserve_once(self):
-        now = _utc_now()
         ref = self.db.collection(META_COLLECTION).document(RATE_STATE_DOCUMENT)
-        transaction = self.db.transaction()
-
-        @firestore.transactional
         def reserve(tx):
-            state = _document_dict(ref.get(transaction=tx)) or {}
+            snapshot = _bounded_get(ref, self.deadline, "rate reservation read", tx)
+            state = _document_dict(snapshot) or {}
+            now = _snapshot_server_time(snapshot)
             blocked_until = _parse_datetime(state.get("blockedUntil"))
+            recent_attempts = list(state.get("recentAttempts", []))
+            committed_attempt = _parse_datetime(state.get("lastAttemptAt"))
+            if committed_attempt:
+                if recent_attempts:
+                    recent_attempts[-1] = committed_attempt
+                else:
+                    recent_attempts.append(committed_attempt)
             wait_seconds, recent = provider_reservation_delay(
-                state.get("recentAttempts", []),
+                recent_attempts,
                 now,
                 self.limit,
                 self.minimum_spacing,
@@ -543,14 +579,19 @@ class PersistentProviderLimiter:
             recent.append(now)
             tx.set(ref, {
                 "recentAttempts": [_iso_utc(value) for value in recent[-self.limit:]],
-                "lastAttemptAt": _iso_utc(now),
+                # The server transform resolves to commit time, so the next
+                # host spaces from the actual reservation rather than a stale
+                # pre-transaction client timestamp.
+                "lastAttemptAt": firestore.SERVER_TIMESTAMP,
                 "requestsPerMinute": self.limit,
-                "updatedAt": _iso_utc(now),
+                "updatedAt": firestore.SERVER_TIMESTAMP,
                 "blockedUntil": _iso_utc(blocked_until) if blocked_until and blocked_until > now else None,
             })
             return 0.0
 
-        return max(0.0, float(reserve(transaction)))
+        return max(0.0, float(_run_bounded_transaction(
+            self.db, reserve, self.deadline, "rate reservation"
+        )))
 
     def acquire(self, request_type="provider"):
         request_seconds = FINNHUB_CONNECT_TIMEOUT_SECONDS + FINNHUB_READ_TIMEOUT_SECONDS
@@ -583,14 +624,12 @@ class PersistentProviderLimiter:
         seconds = max(0.0, float(seconds or 0))
         if not seconds:
             return
-        now = _utc_now()
-        requested_until = now + dt.timedelta(seconds=seconds)
         ref = self.db.collection(META_COLLECTION).document(RATE_STATE_DOCUMENT)
-        transaction = self.db.transaction()
-
-        @firestore.transactional
         def defer_block(tx):
-            state = _document_dict(ref.get(transaction=tx)) or {}
+            snapshot = _bounded_get(ref, self.deadline, "rate defer read", tx)
+            state = _document_dict(snapshot) or {}
+            now = _snapshot_server_time(snapshot)
+            requested_until = now + dt.timedelta(seconds=seconds)
             current_until = _parse_datetime(state.get("blockedUntil"))
             blocked_until = max(filter(None, (current_until, requested_until)))
             tx.set(ref, {
@@ -599,7 +638,7 @@ class PersistentProviderLimiter:
                 "updatedAt": _iso_utc(now),
             })
 
-        defer_block(transaction)
+        _run_bounded_transaction(self.db, defer_block, self.deadline, "rate defer")
 
     def observe_response(self, headers):
         """Persist provider quota observations without relaxing local limits."""
@@ -612,17 +651,17 @@ class PersistentProviderLimiter:
                 raise ValueError
         except (TypeError, ValueError):
             remaining = None
-        reset_at = _provider_reset_datetime(reset_raw)
-        if remaining is None and reset_at is None:
+        if remaining is None and reset_raw is None:
             return
 
-        now = _utc_now()
         ref = self.db.collection(META_COLLECTION).document(RATE_STATE_DOCUMENT)
-        transaction = self.db.transaction()
-
-        @firestore.transactional
         def observe(tx):
-            state = _document_dict(ref.get(transaction=tx)) or {}
+            snapshot = _bounded_get(ref, self.deadline, "rate observation read", tx)
+            state = _document_dict(snapshot) or {}
+            now = _snapshot_server_time(snapshot)
+            reset_at = _provider_reset_datetime(reset_raw, now)
+            if remaining is None and reset_at is None:
+                return
             blocked_until = _parse_datetime(state.get("blockedUntil"))
             if remaining == 0 and reset_at and reset_at > now:
                 blocked_until = max(filter(None, (blocked_until, reset_at)))
@@ -634,7 +673,7 @@ class PersistentProviderLimiter:
                 "providerHeadersObservedAt": _iso_utc(now),
             })
 
-        observe(transaction)
+        _run_bounded_transaction(self.db, observe, self.deadline, "rate observation")
 
     def remaining_before_deadline(self):
         usable = self.deadline - time.monotonic() - (
@@ -849,6 +888,8 @@ def normalize_provider_payload(payload, constituents, coverage_start, coverage_e
             "fiscalQuarter": fiscal_quarter,
             "epsEstimate": _safe_number(item.get("epsEstimate")),
             "revenueEstimate": _safe_number(item.get("revenueEstimate")),
+            "_providerSymbol": provider_symbol,
+            "_primaryProviderSymbol": issuer["primaryProviderSymbol"],
         }
         duplicate_key = (issuer["issuerId"], event["reportDate"], fiscal_year, fiscal_quarter)
         previous = normalized_by_key.get(duplicate_key)
@@ -856,24 +897,28 @@ def normalize_provider_payload(payload, constituents, coverage_start, coverage_e
             duplicate_event_count += 1
             if previous != event:
                 conflicting_duplicate_count += 1
-                # Finnhub occasionally returns more than one estimate record
-                # for the same company/date/period. Prefer the most complete
-                # record, with a canonical JSON tie-breaker so provider order
-                # cannot make revisions oscillate between refreshes.
-                def duplicate_rank(candidate):
-                    populated = sum(candidate.get(field) is not None for field in (
-                        "fiscalYear", "fiscalQuarter", "epsEstimate", "revenueEstimate"
-                    ))
-                    known_session = candidate.get("session") != "unknown"
-                    canonical = json.dumps(candidate, sort_keys=True, separators=(",", ":"))
-                    return populated, known_session, canonical
+                def source_rank(candidate):
+                    return (
+                        candidate.get("_providerSymbol") == candidate.get("_primaryProviderSymbol"),
+                        candidate.get("session") != "unknown",
+                        -SESSION_ORDER.get(candidate.get("session"), 99),
+                        json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+                    )
 
-                normalized_by_key[duplicate_key] = max((previous, event), key=duplicate_rank)
+                preferred, alternate = sorted(
+                    (previous, event), key=source_rank, reverse=True
+                )
+                merged = dict(preferred)
+                for field in ("epsEstimate", "revenueEstimate"):
+                    if merged.get(field) is None:
+                        merged[field] = alternate.get(field)
+                normalized_by_key[duplicate_key] = merged
             continue
         normalized_by_key[duplicate_key] = event
 
     events = sorted(
-        normalized_by_key.values(),
+        ({key: value for key, value in event.items() if not key.startswith("_")}
+         for event in normalized_by_key.values()),
         key=lambda item: (
             item["reportDate"],
             SESSION_ORDER.get(item["session"], 99),
@@ -1004,67 +1049,179 @@ def _document_dict(snapshot):
     return snapshot.to_dict() if snapshot is not None and getattr(snapshot, "exists", False) else None
 
 
-def _get_manifest(db):
-    return _document_dict(db.collection(META_COLLECTION).document(META_DOCUMENT).get())
+def _rpc_timeout(deadline, phase):
+    return max(0.001, _require_execution_time(deadline, phase))
 
 
-def _acquire_lease(db, owner, now):
-    lease_ref = db.collection(META_COLLECTION).document(LEASE_DOCUMENT)
-    transaction = db.transaction()
+def _bounded_get(ref, deadline, phase, transaction=None):
+    if deadline is None:
+        return ref.get(transaction=transaction)
+    timeout = _rpc_timeout(deadline, phase)
+    try:
+        return ref.get(transaction=transaction, timeout=timeout)
+    except TypeError:
+        # Unit-test fakes predate the SDK timeout argument. Pinned production
+        # Firestore versions support it.
+        return ref.get(transaction=transaction)
+
+
+def _snapshot_server_time(snapshot, fallback=None):
+    for name in ("read_time", "update_time", "create_time"):
+        value = getattr(snapshot, name, None)
+        if isinstance(value, dt.datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=dt.timezone.utc)
+            return value.astimezone(dt.timezone.utc)
+    return fallback or _utc_now()
+
+
+def _install_transaction_deadline(transaction, deadline, phase):
+    """Bound SDK transaction begin/commit/rollback for the pinned SDK.
+
+    Firestore's retry decorator begins, commits, and rolls back through private
+    hooks that do not accept RPC timeouts. Keep this pinned compatibility shim
+    centralized and fail closed if the tested surface moves.
+    """
+    if deadline is None or not hasattr(transaction, "_client"):
+        return
+    required = (
+        "_begin", "_commit", "_rollback", "_client", "_write_pbs",
+        "_options_protobuf", "_clean_up",
+    )
+    if any(not hasattr(transaction, name) for name in required):
+        raise CalendarUnavailable("The pinned Firestore transaction API is incompatible.")
+    original_begin = transaction._begin
+    original_rollback = transaction._rollback
+
+    def bounded_begin(tx, retry_id=None):
+        if tx.in_progress:
+            return original_begin(retry_id)
+        response = tx._client._firestore_api.begin_transaction(
+            request={
+                "database": tx._client._database_string,
+                "options": tx._options_protobuf(retry_id),
+            },
+            metadata=tx._client._rpc_metadata,
+            timeout=_rpc_timeout(deadline, f"{phase} begin"),
+        )
+        tx._id = response.transaction
+
+    def bounded_commit(tx):
+        response = tx._client._firestore_api.commit(
+            request={
+                "database": tx._client._database_string,
+                "writes": tx._write_pbs,
+                "transaction": tx._id,
+            },
+            metadata=tx._client._rpc_metadata,
+            timeout=_rpc_timeout(deadline, f"{phase} commit"),
+        )
+        tx._clean_up()
+        tx.write_results = list(response.write_results)
+        tx.commit_time = response.commit_time
+        return tx.write_results
+
+    def bounded_rollback(tx):
+        if not tx.in_progress:
+            return original_rollback()
+        remaining = _remaining_execution_seconds(deadline)
+        if remaining <= 0:
+            tx._clean_up()
+            return None
+        try:
+            return tx._client._firestore_api.rollback(
+                request={
+                    "database": tx._client._database_string,
+                    "transaction": tx._id,
+                },
+                metadata=tx._client._rpc_metadata,
+                timeout=max(0.001, remaining),
+            )
+        finally:
+            if tx.in_progress:
+                tx._clean_up()
+
+    transaction._begin = types.MethodType(bounded_begin, transaction)
+    transaction._commit = types.MethodType(bounded_commit, transaction)
+    transaction._rollback = types.MethodType(bounded_rollback, transaction)
+
+
+def _run_bounded_transaction(db, operation, deadline, phase, max_attempts=5):
+    _require_execution_time(deadline, phase)
+    try:
+        transaction = db.transaction(max_attempts=max_attempts)
+    except TypeError:
+        transaction = db.transaction()
+    _install_transaction_deadline(transaction, deadline, phase)
 
     @firestore.transactional
+    def execute(tx):
+        _require_execution_time(deadline, phase)
+        return operation(tx)
+
+    result = execute(transaction)
+    _require_execution_time(deadline, f"{phase} completion")
+    return result
+
+
+def _get_manifest(db, deadline=None):
+    ref = db.collection(META_COLLECTION).document(META_DOCUMENT)
+    return _document_dict(_bounded_get(ref, deadline, "manifest read"))
+
+
+def _acquire_lease(db, owner, now, deadline=None):
+    lease_ref = db.collection(META_COLLECTION).document(LEASE_DOCUMENT)
     def acquire(tx):
-        current = _document_dict(lease_ref.get(transaction=tx)) or {}
+        snapshot = _bounded_get(lease_ref, deadline, "lease acquisition read", tx)
+        current = _document_dict(snapshot) or {}
+        transaction_now = _snapshot_server_time(snapshot, now)
         expires_at = _parse_datetime(current.get("expiresAt"))
-        if expires_at and expires_at > now and current.get("owner") != owner:
+        if expires_at and expires_at > transaction_now and current.get("owner") != owner:
             return False
         tx.set(lease_ref, {
             "owner": owner,
-            "acquiredAt": _iso_utc(now),
-            "renewedAt": _iso_utc(now),
-            "expiresAt": _iso_utc(now + LEASE_DURATION),
+            "acquiredAt": _iso_utc(transaction_now),
+            "renewedAt": _iso_utc(transaction_now),
+            "expiresAt": _iso_utc(transaction_now + LEASE_DURATION),
         })
         return True
+    return _run_bounded_transaction(db, acquire, deadline, "lease acquisition")
 
-    return acquire(transaction)
 
-
-def _renew_lease(db, owner, now=None, force=False):
+def _renew_lease(db, owner, now=None, force=False, deadline=None):
     now = now or _utc_now()
     lease_ref = db.collection(META_COLLECTION).document(LEASE_DOCUMENT)
-    transaction = db.transaction()
-
-    @firestore.transactional
     def renew(tx):
-        current = _document_dict(lease_ref.get(transaction=tx)) or {}
+        snapshot = _bounded_get(lease_ref, deadline, "lease renewal read", tx)
+        current = _document_dict(snapshot) or {}
+        transaction_now = _snapshot_server_time(snapshot, now)
         expires_at = _parse_datetime(current.get("expiresAt"))
-        if current.get("owner") != owner or not expires_at or expires_at <= now:
+        if current.get("owner") != owner or not expires_at or expires_at <= transaction_now:
             raise LeaseLost("The earnings-calendar maintenance lease was lost.")
-        if not force and expires_at - now > LEASE_RENEW_BEFORE:
+        if not force and expires_at - transaction_now > LEASE_RENEW_BEFORE:
             return False
         tx.set(lease_ref, {
             **current,
             "owner": owner,
-            "renewedAt": _iso_utc(now),
-            "expiresAt": _iso_utc(now + LEASE_DURATION),
+            "renewedAt": _iso_utc(transaction_now),
+            "expiresAt": _iso_utc(transaction_now + LEASE_DURATION),
         })
         return True
 
-    return renew(transaction)
+    return _run_bounded_transaction(db, renew, deadline, "lease renewal")
 
 
-def _release_lease(db, owner):
+def _release_lease(db, owner, deadline=None):
     lease_ref = db.collection(META_COLLECTION).document(LEASE_DOCUMENT)
-    transaction = db.transaction()
-
-    @firestore.transactional
     def release(tx):
-        current = _document_dict(lease_ref.get(transaction=tx)) or {}
+        current = _document_dict(
+            _bounded_get(lease_ref, deadline, "lease release read", tx)
+        ) or {}
         if current.get("owner") == owner:
             tx.delete(lease_ref)
 
     try:
-        release(transaction)
+        _run_bounded_transaction(db, release, deadline, "lease release")
     except Exception as exc:
         _log("earnings_calendar_lease_release_failed", error=type(exc).__name__)
 
@@ -1086,23 +1243,40 @@ def _validate_candidate_size(events, provider_counts, previous_manifest):
         raise ProviderValidationError("Finnhub matched-event count dropped implausibly.")
 
 
-def _get_market_cap_snapshot(db):
-    return _document_dict(db.collection(META_COLLECTION).document(MARKET_CAP_DOCUMENT).get()) or {}
+def _get_market_cap_snapshot(db, deadline=None):
+    ref = db.collection(META_COLLECTION).document(MARKET_CAP_DOCUMENT)
+    return _document_dict(_bounded_get(ref, deadline, "market-cap snapshot read")) or {}
 
 
-def _get_documents(db, collection_name, document_keys):
+def _get_documents(db, collection_name, document_keys, deadline=None):
     refs = [db.collection(collection_name).document(key) for key in sorted(set(document_keys))]
     if not refs:
         return {}
+    timeout = _rpc_timeout(deadline, f"{collection_name} batch read") if deadline is not None else None
+    try:
+        snapshots = db.get_all(refs, timeout=timeout) if timeout is not None else db.get_all(refs)
+    except TypeError:
+        snapshots = db.get_all(refs)
     return {
         snapshot.id: _document_dict(snapshot)
-        for snapshot in db.get_all(refs)
+        for snapshot in snapshots
         if getattr(snapshot, "exists", False)
     }
 
 
-def _get_week_documents(db, week_keys):
-    return _get_documents(db, WEEK_COLLECTION, week_keys)
+def _get_week_documents(db, week_keys, deadline=None):
+    return _get_documents(db, WEEK_COLLECTION, week_keys, deadline)
+
+
+def _symbols_from_retained_weeks(previous_documents, retained_week_keys):
+    retained_week_keys = set(retained_week_keys)
+    return {
+        event.get("symbol")
+        for week_key, document in previous_documents.items()
+        if week_key in retained_week_keys
+        for event in (document.get("events") or [])
+        if isinstance(event, dict) and event.get("symbol")
+    }
 
 
 def _validate_historical_documents(
@@ -1159,36 +1333,39 @@ def _validate_historical_documents(
             seen_orders.add(identity)
 
 
-def checkpoint_market_cap_snapshot(db, owner, snapshot, expected_storage_generation, now=None):
+def checkpoint_market_cap_snapshot(
+    db, owner, snapshot, expected_storage_generation, now=None, deadline=None
+):
     """Generation-checked resumable seed checkpoint under the shared lease."""
     _validate_snapshot_size(snapshot)
     now = now or _utc_now()
     lease_ref = db.collection(META_COLLECTION).document(LEASE_DOCUMENT)
     snapshot_ref = db.collection(META_COLLECTION).document(MARKET_CAP_DOCUMENT)
-    transaction = db.transaction()
-
-    @firestore.transactional
     def checkpoint(tx):
-        lease = _document_dict(lease_ref.get(transaction=tx)) or {}
+        lease_snapshot = _bounded_get(lease_ref, deadline, "seed lease read", tx)
+        lease = _document_dict(lease_snapshot) or {}
+        transaction_now = _snapshot_server_time(lease_snapshot, now)
         expires_at = _parse_datetime(lease.get("expiresAt"))
-        if lease.get("owner") != owner or not expires_at or expires_at <= now:
+        if lease.get("owner") != owner or not expires_at or expires_at <= transaction_now:
             raise LeaseLost("The maintenance lease was lost before the seed checkpoint.")
-        current = _document_dict(snapshot_ref.get(transaction=tx)) or {}
+        current = _document_dict(
+            _bounded_get(snapshot_ref, deadline, "seed snapshot read", tx)
+        ) or {}
         generation = max(0, int(current.get("storageGeneration") or 0))
         if generation != expected_storage_generation:
             raise SnapshotConflict("The market-cap snapshot changed before the seed checkpoint.")
         next_snapshot = dict(snapshot)
         next_snapshot["storageGeneration"] = generation + 1
-        next_snapshot["updatedAt"] = _iso_utc(now)
+        next_snapshot["updatedAt"] = _iso_utc(transaction_now)
         tx.set(snapshot_ref, next_snapshot)
         tx.set(lease_ref, {
             **lease,
-            "renewedAt": _iso_utc(now),
-            "expiresAt": _iso_utc(now + LEASE_DURATION),
+            "renewedAt": _iso_utc(transaction_now),
+            "expiresAt": _iso_utc(transaction_now + LEASE_DURATION),
         })
         return generation + 1
 
-    return checkpoint(transaction)
+    return _run_bounded_transaction(db, checkpoint, deadline, "seed checkpoint")
 
 
 def _publish_if_lease_owned(
@@ -1208,86 +1385,17 @@ def _publish_if_lease_owned(
         execution_deadline, "publication", MIN_PUBLICATION_SECONDS
     )
     _validate_snapshot_size(market_cap_snapshot)
+    _validate_publication_transaction_size(
+        documents, estimate_documents, changed_keys, manifest, market_cap_snapshot
+    )
     lease_ref = db.collection(META_COLLECTION).document(LEASE_DOCUMENT)
     snapshot_ref = db.collection(META_COLLECTION).document(MARKET_CAP_DOCUMENT)
     max_attempts = 3 if execution_deadline is None else max(
         1, min(3, int(remaining // MIN_PUBLICATION_SECONDS))
     )
-    try:
-        transaction = db.transaction(max_attempts=max_attempts)
-    except TypeError:
-        transaction = db.transaction()
-
-    if execution_deadline is not None and hasattr(transaction, "_client"):
-        original_begin = transaction._begin
-        original_commit = transaction._commit
-        original_rollback = transaction._rollback
-
-        def bounded_begin(tx, retry_id=None):
-            if tx.in_progress:
-                return original_begin(retry_id)
-            timeout = max(0.001, _require_execution_time(execution_deadline, "transaction begin"))
-            response = tx._client._firestore_api.begin_transaction(
-                request={
-                    "database": tx._client._database_string,
-                    "options": tx._options_protobuf(retry_id),
-                },
-                metadata=tx._client._rpc_metadata,
-                timeout=timeout,
-            )
-            tx._id = response.transaction
-
-        def bounded_commit(tx):
-            if not tx.in_progress:
-                return original_commit()
-            timeout = max(0.001, _require_execution_time(execution_deadline, "transaction commit"))
-            response = tx._client._firestore_api.commit(
-                request={
-                    "database": tx._client._database_string,
-                    "writes": tx._write_pbs,
-                    "transaction": tx._id,
-                },
-                metadata=tx._client._rpc_metadata,
-                timeout=timeout,
-            )
-            tx._clean_up()
-            tx.write_results = list(response.write_results)
-            tx.commit_time = response.commit_time
-            return tx.write_results
-
-        def bounded_rollback(tx):
-            if not tx.in_progress:
-                return original_rollback()
-            remaining = _remaining_execution_seconds(execution_deadline)
-            if remaining <= 0:
-                tx._clean_up()
-                return None
-            try:
-                tx._client._firestore_api.rollback(
-                    request={
-                        "database": tx._client._database_string,
-                        "transaction": tx._id,
-                    },
-                    metadata=tx._client._rpc_metadata,
-                    timeout=max(0.001, remaining),
-                )
-            finally:
-                tx._clean_up()
-
-        transaction._begin = types.MethodType(bounded_begin, transaction)
-        transaction._commit = types.MethodType(bounded_commit, transaction)
-        transaction._rollback = types.MethodType(bounded_rollback, transaction)
-
     def transaction_get(ref, tx):
-        if execution_deadline is None:
-            return ref.get(transaction=tx)
-        timeout = max(0.001, _require_execution_time(execution_deadline, "publication read"))
-        try:
-            return ref.get(transaction=tx, timeout=timeout)
-        except TypeError:
-            return ref.get(transaction=tx)
+        return _bounded_get(ref, execution_deadline, "publication read", tx)
 
-    @firestore.transactional
     def publish(tx):
         _require_execution_time(execution_deadline, "publication transaction")
         current = _document_dict(transaction_get(lease_ref, tx)) or {}
@@ -1310,7 +1418,9 @@ def _publish_if_lease_owned(
         tx.set(snapshot_ref, market_cap_snapshot)
         tx.delete(lease_ref)
 
-    publish(transaction)
+    _run_bounded_transaction(
+        db, publish, execution_deadline, "publication transaction", max_attempts
+    )
     _require_execution_time(execution_deadline, "publication completion")
 
 
@@ -1340,7 +1450,7 @@ def refresh_earnings_calendar(
     if provider_deadline <= started_monotonic:
         raise CalendarUnavailable("The execution budget leaves no safe provider window.")
 
-    previous_manifest = _get_manifest(db) or {}
+    previous_manifest = _get_manifest(db, execution_deadline) or {}
     refresh_after = _parse_datetime(previous_manifest.get("refreshAfter"))
     if _is_fresh_for_caller(previous_manifest, now, manual):
         return {
@@ -1351,7 +1461,7 @@ def refresh_earnings_calendar(
         }
 
     owner = uuid.uuid4().hex
-    if not _acquire_lease(db, owner, now):
+    if not _acquire_lease(db, owner, now, execution_deadline):
         return {"status": "refresh_in_progress"}
 
     lease_released = False
@@ -1359,7 +1469,7 @@ def refresh_earnings_calendar(
         # A caller may have completed a refresh between the optimistic read and
         # this lease acquisition. Only the snapshot read under our lease may be
         # used to derive revisions and the refresh sequence.
-        previous_manifest = _get_manifest(db) or {}
+        previous_manifest = _get_manifest(db, execution_deadline) or {}
         refresh_after = _parse_datetime(previous_manifest.get("refreshAfter"))
         if _is_fresh_for_caller(previous_manifest, now, manual):
             return {
@@ -1372,7 +1482,7 @@ def refresh_earnings_calendar(
 
         def renew_lease():
             nonlocal lease_renewals
-            if _renew_lease(db, owner):
+            if _renew_lease(db, owner, deadline=execution_deadline):
                 lease_renewals += 1
 
         constituents = load_constituents(constituent_path)
@@ -1393,9 +1503,9 @@ def refresh_earnings_calendar(
         _log("earnings_constituent_reconciliation", multiSecurityIssuers=multi_security_issuers)
         coverage_start, coverage_end = coverage_window(now, config["futureCoverageDays"])
         previous_week_keys = set((previous_manifest.get("weeks") or {}).keys())
-        previous_documents = _get_week_documents(db, previous_week_keys)
+        previous_documents = _get_week_documents(db, previous_week_keys, execution_deadline)
         previous_estimate_documents = _get_documents(
-            db, ESTIMATE_WEEK_COLLECTION, previous_week_keys
+            db, ESTIMATE_WEEK_COLLECTION, previous_week_keys, execution_deadline
         )
         retained_week_keys = previous_week_keys.intersection(
             week.isoformat() for week in _iter_week_starts(coverage_start, coverage_end)
@@ -1408,7 +1518,7 @@ def refresh_earnings_calendar(
             market_today,
         )
         _require_execution_time(execution_deadline, "provider work", publication_reserve)
-        previous_snapshot = _get_market_cap_snapshot(db)
+        previous_snapshot = _get_market_cap_snapshot(db, execution_deadline)
         expected_storage_generation = max(0, int(previous_snapshot.get("storageGeneration") or 0))
         limiter = PersistentProviderLimiter(
             db,
@@ -1433,12 +1543,9 @@ def refresh_earnings_calendar(
         )
         _validate_candidate_size(events, provider_counts, previous_manifest)
 
-        prior_symbols = {
-            event.get("symbol")
-            for document in previous_documents.values()
-            for event in (document.get("events") or [])
-            if isinstance(event, dict)
-        }
+        prior_symbols = _symbols_from_retained_weeks(
+            previous_documents, retained_week_keys
+        )
         retained_issuer_ids = {event.get("issuerId") for event in events if event.get("issuerId")}
         for issuer_id, record in (previous_snapshot.get("issuers") or {}).items():
             if prior_symbols.intersection(record.get("constituentSymbols") or [record.get("symbol")]):
@@ -1529,7 +1636,7 @@ def refresh_earnings_calendar(
         if candidate_snapshot["currentIssuerMissingCount"] == 0:
             candidate_snapshot["lastCompleteSeedAt"] = _iso_utc(now)
             candidate_snapshot["lastCompleteSeedConstituentVersion"] = constituents["metadata"]["version"]
-        elif candidate_snapshot.get("lastCompleteSeedConstituentVersion") != constituents["metadata"]["version"]:
+        else:
             candidate_snapshot["lastCompleteSeedAt"] = None
             candidate_snapshot["lastCompleteSeedConstituentVersion"] = None
 
@@ -1645,7 +1752,7 @@ def refresh_earnings_calendar(
         }
     finally:
         if not lease_released:
-            _release_lease(db, owner)
+            _release_lease(db, owner, execution_deadline)
 
 
 def _public_manifest(manifest):

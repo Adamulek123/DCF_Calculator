@@ -81,9 +81,9 @@ def fetch_profile_with_backoff(api_key, issuer, limiter, max_attempts=3):
     raise AssertionError("unreachable")
 
 
-def retained_issuer_ids(db, constituents, manifest):
+def retained_issuer_ids(db, constituents, manifest, deadline=None):
     week_keys = set((manifest.get("weeks") or {}).keys())
-    documents = calendar._get_week_documents(db, week_keys)
+    documents = calendar._get_week_documents(db, week_keys, deadline)
     retained = set()
     by_symbol = {}
     for company in constituents["companies"]:
@@ -106,6 +106,9 @@ def finalize_seed_metadata(snapshot, issuers, constituent_version, completed_at)
     if snapshot["currentIssuerMissingCount"] == 0:
         snapshot["lastCompleteSeedAt"] = calendar._iso_utc(completed_at)
         snapshot["lastCompleteSeedConstituentVersion"] = constituent_version
+    else:
+        snapshot["lastCompleteSeedAt"] = None
+        snapshot["lastCompleteSeedConstituentVersion"] = None
     after = (
         snapshot.get("lastCompleteSeedAt"),
         snapshot.get("lastCompleteSeedConstituentVersion"),
@@ -130,20 +133,25 @@ def main():
         raise RuntimeError("Currency validation does not cover the reviewed constituent version")
     issuers, _ = group_active_issuers(constituents["companies"], market_today)
     owner = f"seed-{uuid.uuid4().hex}"
-    if not calendar._acquire_lease(db, owner, now):
+    seconds = calendar._positive_int_environment(
+        "EARNINGS_EXECUTION_MAX_SECONDS", calendar.DEFAULT_EXECUTION_MAX_SECONDS, 3600
+    )
+    deadline = started_monotonic + seconds - 30
+    if not calendar._acquire_lease(db, owner, now, deadline):
         print(json.dumps({"status": "refresh_in_progress"}))
         return 0
 
     attempted = updated = failed = skipped = 0
     try:
-        stored = calendar._get_market_cap_snapshot(db)
-        manifest = calendar._get_manifest(db) or {}
-        retained = retained_issuer_ids(db, constituents, manifest)
+        stored = calendar._get_market_cap_snapshot(db, deadline)
+        manifest = calendar._get_manifest(db, deadline) or {}
+        retained = retained_issuer_ids(db, constituents, manifest, deadline)
         generation = max(0, int(stored.get("storageGeneration") or 0))
         snapshot = reconcile_snapshot(
             stored, issuers, constituents["metadata"]["version"], retained
         )
         snapshot["providerPermission"] = permission
+        reconciliation_changed = snapshot != stored
         work = []
         for issuer_id, issuer in sorted(issuers.items(), key=lambda item: item[1]["symbol"]):
             record = snapshot["issuers"].get(issuer_id)
@@ -155,10 +163,6 @@ def main():
                 work.append((issuer_id, issuer))
         work = work[: args.max_profiles]
 
-        seconds = calendar._positive_int_environment(
-            "EARNINGS_EXECUTION_MAX_SECONDS", calendar.DEFAULT_EXECUTION_MAX_SECONDS, 3600
-        )
-        deadline = time.monotonic() + seconds - 30
         limiter = calendar.PersistentProviderLimiter(
             db,
             calendar._positive_int_environment(
@@ -167,7 +171,7 @@ def main():
                 60,
             ),
             deadline,
-            lease_renewer=lambda: calendar._renew_lease(db, owner),
+            lease_renewer=lambda: calendar._renew_lease(db, owner, deadline=deadline),
         )
         api_key = calendar._calendar_secret("FINNHUB_API_KEY")
         buffered = 0
@@ -179,26 +183,11 @@ def main():
             snapshot["currentIssuerMissingCount"] = sum(
                 not valid_cap(snapshot["issuers"].get(key)) for key in issuers
             )
-            for conflict_attempt in range(3):
-                try:
-                    generation = calendar.checkpoint_market_cap_snapshot(
-                        db, owner, snapshot, generation, attempted_at
-                    )
-                    snapshot["storageGeneration"] = generation
-                    dirty.clear()
-                    return
-                except calendar.SnapshotConflict:
-                    if conflict_attempt == 2:
-                        raise
-                    remote = calendar._get_market_cap_snapshot(db)
-                    merged = reconcile_snapshot(
-                        remote, issuers, constituents["metadata"]["version"], retained
-                    )
-                    for key in dirty:
-                        merged["issuers"][key] = snapshot["issuers"][key]
-                    merged["providerPermission"] = permission
-                    snapshot = merged
-                    generation = max(0, int(remote.get("storageGeneration") or 0))
+            generation = calendar.checkpoint_market_cap_snapshot(
+                db, owner, snapshot, generation, attempted_at, deadline
+            )
+            snapshot["storageGeneration"] = generation
+            dirty.clear()
 
         for issuer_id, issuer in work:
             attempted_at = calendar._utc_now()
@@ -239,7 +228,7 @@ def main():
             constituents["metadata"]["version"],
             calendar._utc_now(),
         )
-        if buffered or completion_changed:
+        if buffered or completion_changed or reconciliation_changed:
             save_checkpoint(calendar._utc_now())
         missing = sum(not valid_cap(snapshot["issuers"].get(key)) for key in issuers)
         missing_symbols = sorted(
@@ -262,7 +251,7 @@ def main():
         }, sort_keys=True))
         return 0 if failed == 0 else 1
     finally:
-        calendar._release_lease(db, owner)
+        calendar._release_lease(db, owner, deadline=deadline if "deadline" in locals() else None)
 
 
 if __name__ == "__main__":

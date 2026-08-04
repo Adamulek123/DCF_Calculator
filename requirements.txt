@@ -3,7 +3,8 @@ Flask-Compress
 yfinance
 Flask-Cors
 Brotli
-firebase-admin
+firebase-admin==7.1.0
+google-cloud-firestore==2.21.0
 requests
 gunicorn
 flask_limiter

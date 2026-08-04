@@ -58,4 +58,6 @@ jobs:
         if: steps.refresh.outputs.provider_checked == 'true'
         env:
           EARNINGS_HEARTBEAT_URL: ${{ secrets.EARNINGS_HEARTBEAT_URL }}
+          EARNINGS_EXPECTED_CHECKED_AT: ${{ steps.refresh.outputs.checked_at }}
+          EARNINGS_EXPECTED_REFRESH_SEQUENCE: ${{ steps.refresh.outputs.refresh_sequence }}
         run: python scripts/notify_earnings_heartbeat.py

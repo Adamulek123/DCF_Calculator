@@ -33,6 +33,7 @@ def _write_github_outputs(result: dict[str, object]) -> None:
     with open(output_path, "a", encoding="utf-8") as output:
         output.write(f"provider_checked={'true' if result.get('providerChecked') else 'false'}\n")
         output.write(f"checked_at={result.get('checkedAt') or ''}\n")
+        output.write(f"refresh_sequence={result.get('refreshSequence') or ''}\n")
 
 
 def _firestore_client():

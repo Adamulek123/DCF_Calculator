@@ -1,5 +1,7 @@
 import datetime as dt
 from contextlib import ExitStack
+import io
+import json
 import os
 from pathlib import Path
 import unittest
@@ -9,6 +11,7 @@ from flask import Flask
 
 import earnings_calendar
 from scripts import run_earnings_calendar_refresh as refresh_cli
+from scripts import notify_earnings_heartbeat as heartbeat_cli
 
 
 class FakeSnapshot:
@@ -91,6 +94,25 @@ def sample_event():
 
 
 class EarningsCalendarBuildTests(unittest.TestCase):
+    def test_pinned_sdk_encodes_representative_500_issuer_snapshot(self):
+        snapshot = {
+            "schemaVersion": 1,
+            "issuers": {
+                f"{index:010d}": {
+                    "symbol": f"SYM{index}",
+                    "providerSymbols": [f"SYM{index}", f"ALT{index}"],
+                    "constituentSymbols": [f"SYM{index}"],
+                    "marketCapMillions": 123456.78,
+                    "lastErrorCode": "x" * 64,
+                    "retrievedAt": "2026-08-04T12:00:00Z",
+                }
+                for index in range(500)
+            },
+        }
+        size = earnings_calendar._firestore_document_bytes(snapshot)
+        self.assertIsNotNone(size)
+        self.assertLess(size, earnings_calendar.MAX_FIRESTORE_DOCUMENT_BYTES)
+
     def test_production_horizon_cannot_exceed_thirty_days(self):
         with mock.patch.dict(os.environ, {"EARNINGS_FUTURE_COVERAGE_DAYS": "31"}, clear=False):
             with self.assertRaises(earnings_calendar.CalendarUnavailable):
@@ -200,6 +222,36 @@ class EarningsCalendarBuildTests(unittest.TestCase):
 
 
 class ProviderBehaviorTests(unittest.TestCase):
+    def test_share_class_duplicates_merge_estimates_and_use_primary_session(self):
+        primary = {
+            "cik": "0000000001", "symbol": "GOOGL", "providerSymbol": "GOOGL",
+            "providerSymbols": ["GOOGL"], "name": "Alphabet", "sector": "Tech",
+            "validFrom": dt.date(2000, 1, 1), "validTo": None,
+            "calendarPrimary": True,
+        }
+        alias = {
+            **primary, "symbol": "GOOG", "providerSymbol": "GOOG",
+            "providerSymbols": ["GOOG"], "calendarPrimary": False,
+        }
+        constituents = {
+            "byProviderSymbol": {"GOOG": alias, "GOOGL": primary},
+            "companiesByCik": {"0000000001": [alias, primary]},
+        }
+        payload = {"earningsCalendar": [
+            {"symbol": "GOOG", "date": "2026-08-04", "year": 2026,
+             "quarter": 2, "hour": "bmo", "epsEstimate": 2.5},
+            {"symbol": "GOOGL", "date": "2026-08-04", "year": 2026,
+             "quarter": 2, "hour": "amc", "revenueEstimate": 1000},
+        ]}
+        events, counts = earnings_calendar.normalize_provider_payload(
+            payload, constituents, dt.date(2026, 8, 3), dt.date(2026, 8, 9)
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["session"], "after_close")
+        self.assertEqual(events[0]["epsEstimate"], 2.5)
+        self.assertEqual(events[0]["revenueEstimate"], 1000)
+        self.assertEqual(counts["conflictingDuplicateCount"], 1)
+
     def test_successful_response_observes_rate_limit_headers(self):
         limiter = mock.Mock()
         limiter.request_timeouts.return_value = (5, 10)
@@ -505,6 +557,54 @@ class FirestoreTransactionTests(unittest.TestCase):
                 )
         self.assertEqual(self.db.collections[earnings_calendar.META_COLLECTION], before)
 
+    def test_firestore_read_receives_remaining_deadline_timeout(self):
+        ref = mock.Mock()
+        ref.get.side_effect = TimeoutError("blocked")
+        with mock.patch.object(earnings_calendar.time, "monotonic", return_value=100):
+            with self.assertRaises(TimeoutError):
+                earnings_calendar._bounded_get(ref, 105, "test read")
+        self.assertEqual(ref.get.call_args.kwargs["timeout"], 5)
+
+    def test_rate_reservation_uses_server_read_time_on_each_retry(self):
+        first = FakeSnapshot("rate", {"recentAttempts": []})
+        second = FakeSnapshot("rate", {"recentAttempts": []})
+        first.read_time = dt.datetime(2026, 8, 4, 12, 0, tzinfo=dt.timezone.utc)
+        second.read_time = dt.datetime(2026, 8, 4, 12, 0, 2, tzinfo=dt.timezone.utc)
+        written = []
+
+        class Transaction:
+            def set(self, _ref, data):
+                written.append(data)
+
+        def retry_twice(_db, operation, _deadline, _phase, max_attempts=5):
+            operation(Transaction())
+            return operation(Transaction())
+
+        limiter = earnings_calendar.PersistentProviderLimiter(self.db, 45, 999)
+        with mock.patch.object(
+            earnings_calendar, "_bounded_get", side_effect=[first, second]
+        ), mock.patch.object(
+            earnings_calendar, "_run_bounded_transaction", side_effect=retry_twice
+        ), mock.patch.object(
+            earnings_calendar, "_utc_now",
+            return_value=dt.datetime(2026, 8, 4, 11, 55, tzinfo=dt.timezone.utc),
+        ):
+            self.assertEqual(limiter._reserve_once(), 0)
+        self.assertEqual(
+            written[-1]["recentAttempts"][-1], "2026-08-04T12:00:02Z"
+        )
+        self.assertIs(written[-1]["lastAttemptAt"], earnings_calendar.firestore.SERVER_TIMESTAMP)
+
+    def test_expired_week_symbols_are_not_retained(self):
+        documents = {
+            "2026-07-20": {"events": [{"symbol": "EXPIRED"}]},
+            "2026-07-27": {"events": [{"symbol": "KEPT"}]},
+        }
+        self.assertEqual(
+            earnings_calendar._symbols_from_retained_weeks(documents, {"2026-07-27"}),
+            {"KEPT"},
+        )
+
 
 class HistoricalSnapshotTests(unittest.TestCase):
     def setUp(self):
@@ -584,6 +684,64 @@ class RefreshCliTests(unittest.TestCase):
                 ), \
                 mock.patch.object(refresh_cli, "_write_result"):
             self.assertEqual(refresh_cli.main(), 1)
+
+    def test_github_outputs_include_publication_identity(self):
+        opened = mock.mock_open()
+        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": "output.txt"}), \
+                mock.patch("builtins.open", opened):
+            refresh_cli._write_github_outputs({
+                "providerChecked": True,
+                "checkedAt": "2026-08-04T12:00:00Z",
+                "refreshSequence": 42,
+            })
+        written = "".join(call.args[0] for call in opened().write.call_args_list)
+        self.assertIn("checked_at=2026-08-04T12:00:00Z", written)
+        self.assertIn("refresh_sequence=42", written)
+
+
+class HeartbeatCliTests(unittest.TestCase):
+    class Response(io.BytesIO):
+        def __init__(self, payload, status=200):
+            super().__init__(json.dumps(payload).encode())
+            self.status = status
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def test_rejects_older_or_wrong_production_publication(self):
+        health = self.Response({
+            "status": "ok", "checkedAt": "2026-08-04T11:00:00Z",
+            "refreshSequence": 41,
+        })
+        with mock.patch.dict(os.environ, {
+            "EARNINGS_HEARTBEAT_URL": "https://heartbeat.example",
+            "EARNINGS_EXPECTED_CHECKED_AT": "2026-08-04T12:00:00Z",
+            "EARNINGS_EXPECTED_REFRESH_SEQUENCE": "42",
+        }, clear=False), mock.patch.object(
+            heartbeat_cli, "urlopen", return_value=health
+        ) as urlopen:
+            with self.assertRaisesRegex(RuntimeError, "checkedAt"):
+                heartbeat_cli.main()
+        self.assertEqual(urlopen.call_count, 1)
+
+    def test_matching_publication_pings_monitor(self):
+        payload = {
+            "status": "ok", "checkedAt": "2026-08-04T12:00:00Z",
+            "refreshSequence": 42,
+        }
+        with mock.patch.dict(os.environ, {
+            "EARNINGS_HEARTBEAT_URL": "https://heartbeat.example",
+            "EARNINGS_EXPECTED_CHECKED_AT": payload["checkedAt"],
+            "EARNINGS_EXPECTED_REFRESH_SEQUENCE": "42",
+        }, clear=False), mock.patch.object(
+            heartbeat_cli, "urlopen",
+            side_effect=[self.Response(payload), self.Response({}, 204)],
+        ) as urlopen, mock.patch("builtins.print"):
+            self.assertEqual(heartbeat_cli.main(), 0)
+        self.assertEqual(urlopen.call_count, 2)
 
 
 class EarningsCalendarRouteTests(unittest.TestCase):

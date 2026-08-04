@@ -196,6 +196,68 @@ class ProfileTests(unittest.TestCase):
 
 
 class SeedTests(unittest.TestCase):
+    def test_generation_conflict_aborts_without_reloading_or_replaying_dirty_record(self):
+        args = mock.Mock(force=True, max_profiles=1, checkpoint_size=1)
+        current_issuer = issuer("1", "ONE")
+        stored = {"storageGeneration": 7, "issuers": {"1": {"symbol": "ONE"}}}
+        reconciled = {**stored, "issuers": {"1": {"symbol": "ONE"}}}
+        limiter = mock.Mock(attempts_by_type={"profile": 1})
+        constituent_version = caps.CURRENCY_VALIDATION["constituentVersion"]
+        constituents = {"metadata": {"version": constituent_version}, "companies": []}
+        with mock.patch.object(seed, "parse_args", return_value=args), \
+                mock.patch.object(seed.calendar, "_provider_permission_metadata", return_value={}), \
+                mock.patch.object(seed, "firestore_client", return_value=object()), \
+                mock.patch.object(seed.calendar, "load_constituents", return_value=constituents), \
+                mock.patch.object(seed, "group_active_issuers", return_value=({"1": current_issuer}, {})), \
+                mock.patch.object(seed.calendar, "_acquire_lease", return_value=True), \
+                mock.patch.object(seed.calendar, "_release_lease"), \
+                mock.patch.object(seed.calendar, "_get_market_cap_snapshot", return_value=stored) as load, \
+                mock.patch.object(seed.calendar, "_get_manifest", return_value={}), \
+                mock.patch.object(seed, "retained_issuer_ids", return_value=set()), \
+                mock.patch.object(seed, "reconcile_snapshot", return_value=reconciled), \
+                mock.patch.object(seed.calendar, "PersistentProviderLimiter", return_value=limiter), \
+                mock.patch.object(seed.calendar, "_calendar_secret", return_value="secret"), \
+                mock.patch.object(seed, "fetch_profile_with_backoff", return_value={}), \
+                mock.patch.object(seed, "normalize_profile", return_value={"marketCapMillions": 1}), \
+                mock.patch.object(
+                    seed.calendar, "checkpoint_market_cap_snapshot",
+                    side_effect=seed.calendar.SnapshotConflict("newer snapshot"),
+                ) as checkpoint:
+            with self.assertRaises(seed.calendar.SnapshotConflict):
+                seed.main()
+        self.assertEqual(checkpoint.call_count, 1)
+        self.assertEqual(load.call_count, 1)
+
+    def test_alias_only_reconciliation_checkpoints_when_all_work_is_in_cooldown(self):
+        args = mock.Mock(force=False, max_profiles=1, checkpoint_size=1)
+        current_issuer = issuer("1", "ONE")
+        stored = {"storageGeneration": 7, "issuers": {"1": {"symbol": "OLD"}}}
+        reconciled = {
+            "storageGeneration": 7,
+            "issuers": {"1": {"symbol": "ONE", "providerSymbols": ["ONE"]}},
+        }
+        constituent_version = caps.CURRENCY_VALIDATION["constituentVersion"]
+        constituents = {"metadata": {"version": constituent_version}, "companies": []}
+        with mock.patch.object(seed, "parse_args", return_value=args), \
+                mock.patch.object(seed.calendar, "_provider_permission_metadata", return_value={}), \
+                mock.patch.object(seed, "firestore_client", return_value=object()), \
+                mock.patch.object(seed.calendar, "load_constituents", return_value=constituents), \
+                mock.patch.object(seed, "group_active_issuers", return_value=({"1": current_issuer}, {})), \
+                mock.patch.object(seed.calendar, "_acquire_lease", return_value=True), \
+                mock.patch.object(seed.calendar, "_release_lease"), \
+                mock.patch.object(seed.calendar, "_get_market_cap_snapshot", return_value=stored), \
+                mock.patch.object(seed.calendar, "_get_manifest", return_value={}), \
+                mock.patch.object(seed, "retained_issuer_ids", return_value=set()), \
+                mock.patch.object(seed, "reconcile_snapshot", return_value=reconciled), \
+                mock.patch.object(seed, "profile_attempt_due", return_value=False), \
+                mock.patch.object(seed.calendar, "PersistentProviderLimiter"), \
+                mock.patch.object(seed.calendar, "_calendar_secret", return_value="secret"), \
+                mock.patch.object(
+                    seed.calendar, "checkpoint_market_cap_snapshot", return_value=8
+                ) as checkpoint, mock.patch("builtins.print"):
+            self.assertEqual(seed.main(), 0)
+        self.assertEqual(checkpoint.call_count, 1)
+
     def test_seed_retries_429_with_persisted_exponential_backoff(self):
         limiter = mock.Mock()
         limited = seed.calendar.ProviderRateLimited("limited", retry_after=None)
@@ -238,6 +300,20 @@ class SeedTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(snapshot["lastCompleteSeedConstituentVersion"], "v1")
         self.assertEqual(snapshot["lastCompleteSeedAt"], "2026-08-03T00:00:00Z")
+
+    def test_incomplete_same_version_clears_prior_completeness(self):
+        issuers = {"1": issuer("1", "ONE")}
+        snapshot = caps.reconcile_snapshot({}, issuers, "v1")
+        snapshot.update({
+            "lastCompleteSeedAt": "2026-08-01T00:00:00Z",
+            "lastCompleteSeedConstituentVersion": "v1",
+        })
+        changed = seed.finalize_seed_metadata(
+            snapshot, issuers, "v1", dt.datetime(2026, 8, 3, tzinfo=UTC)
+        )
+        self.assertTrue(changed)
+        self.assertIsNone(snapshot["lastCompleteSeedAt"])
+        self.assertIsNone(snapshot["lastCompleteSeedConstituentVersion"])
 
     def test_production_seed_requires_permission_before_firestore(self):
         args = mock.Mock(force=False, max_profiles=1, checkpoint_size=1)
@@ -322,6 +398,34 @@ class QueueTests(unittest.TestCase):
         for _run in range(5):
             selected = caps.select_refresh_queue(high + [overdue], 10)
             self.assertIn("old", [item["issuerId"] for item in selected])
+
+    def test_missing_retrieval_timestamp_is_infinitely_overdue(self):
+        issuers = {"1": issuer("1", "LEGACY")}
+        snapshot = caps.reconcile_snapshot({}, issuers, "v1")
+        snapshot["issuers"]["1"]["marketCapMillions"] = 10
+        queue = caps.build_refresh_queue(snapshot, issuers, [], self.today, self.now)
+        self.assertEqual(queue[0]["priority"], 8)
+        self.assertTrue(math.isinf(queue[0]["maximumAgeOverdueBySeconds"]))
+
+    def test_tiny_budgets_never_displace_urgent_missing_work(self):
+        urgent = {
+            "issuerId": "urgent", "issuer": issuer("urgent", "URGENT"),
+            "priority": 1, "maximumAgeOverdueBySeconds": 0,
+        }
+        old = {
+            "issuerId": "old", "issuer": issuer("old", "OLD"),
+            "priority": 8, "maximumAgeOverdueBySeconds": math.inf,
+        }
+        for budget in (1, 2, 3):
+            filler = [{
+                "issuerId": f"regular-{index}",
+                "issuer": issuer(f"regular-{index}", f"R{index}"),
+                "priority": 2,
+                "maximumAgeOverdueBySeconds": 0,
+            } for index in range(3)]
+            selected = caps.select_refresh_queue([urgent, *filler, old], budget)
+            self.assertEqual(selected[0]["issuerId"], "urgent")
+            self.assertEqual(len(selected), budget)
 
 
 class RateLimitTests(unittest.TestCase):
