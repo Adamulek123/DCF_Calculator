@@ -121,7 +121,6 @@ def main():
     args = parse_args()
     if not 1 <= args.max_profiles <= 500 or not 1 <= args.checkpoint_size <= 100:
         raise SystemExit("profile and checkpoint bounds are invalid")
-    permission = calendar._provider_permission_metadata(require=True)
     db = firestore_client()
     now = calendar._utc_now()
     market_today = now.astimezone(calendar.ZoneInfo("America/New_York")).date()
@@ -150,7 +149,7 @@ def main():
         snapshot = reconcile_snapshot(
             stored, issuers, constituents["metadata"]["version"], retained
         )
-        snapshot["providerPermission"] = permission
+        snapshot.pop("providerPermission", None)
         reconciliation_changed = snapshot != stored
         work = []
         for issuer_id, issuer in sorted(issuers.items(), key=lambda item: item[1]["symbol"]):

@@ -213,46 +213,6 @@ def _runtime_config(manual=False):
     }
 
 
-def _provider_permission_metadata(require=None):
-    """Load non-secret evidence fields; private correspondence stays external."""
-    development_mode = (
-        os.environ.get("EARNINGS_CALENDAR_DEVELOPMENT_MODE", "").strip().lower() == "true"
-    )
-    require = not development_mode if require is None else require
-    confirmed = os.environ.get("EARNINGS_PROVIDER_PERMISSION_CONFIRMED", "").strip().lower() == "true"
-    permission_date = os.environ.get("EARNINGS_PROVIDER_PERMISSION_DATE", "").strip()
-    account_plan = os.environ.get("EARNINGS_PROVIDER_ACCOUNT_PLAN", "").strip()
-    evidence_ref = os.environ.get("EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF", "").strip()
-    valid_permission_date = False
-    if permission_date:
-        try:
-            _parse_date(permission_date, "EARNINGS_PROVIDER_PERMISSION_DATE")
-            valid_permission_date = True
-        except ValueError:
-            valid_permission_date = False
-    permission_complete = bool(
-        confirmed and valid_permission_date and account_plan and evidence_ref
-    )
-    if require:
-        if not valid_permission_date:
-            raise CalendarUnavailable("Provider permission date is not configured.")
-        if not permission_complete:
-            raise CalendarUnavailable("Provider permission evidence is incomplete.")
-    return {
-        "confirmed": permission_complete,
-        "permissionDate": permission_date or None,
-        "accountPlan": account_plan or None,
-        "evidenceReference": evidence_ref or None,
-        "scope": {
-            "serverSideCaching": permission_complete,
-            "publicDisplay": permission_complete,
-            "ranking": permission_complete,
-            "redistribution": permission_complete,
-            "futureCoverageDays": 30 if permission_complete else 0,
-        },
-    }
-
-
 def _utc_now():
     return dt.datetime.now(dt.timezone.utc)
 
@@ -1439,7 +1399,6 @@ def refresh_earnings_calendar(
         now = now.replace(tzinfo=dt.timezone.utc)
     now = now.astimezone(dt.timezone.utc)
     config = _runtime_config(manual=manual)
-    permission = _provider_permission_metadata()
     started_monotonic = time.monotonic()
     execution_deadline = started_monotonic + config["executionMaxSeconds"]
     publication_reserve = min(
@@ -1631,7 +1590,7 @@ def refresh_earnings_calendar(
         candidate_snapshot["contentRevision"] = snapshot_content_revision(candidate_snapshot)
         candidate_snapshot["storageGeneration"] = expected_storage_generation + 1
         candidate_snapshot["updatedAt"] = _iso_utc(now)
-        candidate_snapshot["providerPermission"] = permission
+        candidate_snapshot.pop("providerPermission", None)
         candidate_snapshot["providerSupportedFutureDays"] = config["providerSupportedFutureDays"]
         if candidate_snapshot["currentIssuerMissingCount"] == 0:
             candidate_snapshot["lastCompleteSeedAt"] = _iso_utc(now)
