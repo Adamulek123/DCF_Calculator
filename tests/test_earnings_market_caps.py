@@ -205,7 +205,6 @@ class SeedTests(unittest.TestCase):
         constituent_version = caps.CURRENCY_VALIDATION["constituentVersion"]
         constituents = {"metadata": {"version": constituent_version}, "companies": []}
         with mock.patch.object(seed, "parse_args", return_value=args), \
-                mock.patch.object(seed.calendar, "_provider_permission_metadata", return_value={}), \
                 mock.patch.object(seed, "firestore_client", return_value=object()), \
                 mock.patch.object(seed.calendar, "load_constituents", return_value=constituents), \
                 mock.patch.object(seed, "group_active_issuers", return_value=({"1": current_issuer}, {})), \
@@ -239,7 +238,6 @@ class SeedTests(unittest.TestCase):
         constituent_version = caps.CURRENCY_VALIDATION["constituentVersion"]
         constituents = {"metadata": {"version": constituent_version}, "companies": []}
         with mock.patch.object(seed, "parse_args", return_value=args), \
-                mock.patch.object(seed.calendar, "_provider_permission_metadata", return_value={}), \
                 mock.patch.object(seed, "firestore_client", return_value=object()), \
                 mock.patch.object(seed.calendar, "load_constituents", return_value=constituents), \
                 mock.patch.object(seed, "group_active_issuers", return_value=({"1": current_issuer}, {})), \
@@ -314,22 +312,6 @@ class SeedTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertIsNone(snapshot["lastCompleteSeedAt"])
         self.assertIsNone(snapshot["lastCompleteSeedConstituentVersion"])
-
-    def test_production_seed_requires_permission_before_firestore(self):
-        args = mock.Mock(force=False, max_profiles=1, checkpoint_size=1)
-        relevant = {
-            "EARNINGS_PROVIDER_PERMISSION_CONFIRMED": "",
-            "EARNINGS_PROVIDER_PERMISSION_DATE": "",
-            "EARNINGS_PROVIDER_ACCOUNT_PLAN": "",
-            "EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF": "",
-        }
-        with mock.patch.dict(os.environ, relevant, clear=False), \
-                mock.patch.object(seed, "parse_args", return_value=args), \
-                mock.patch.object(seed, "firestore_client") as firestore_client:
-            with self.assertRaises(seed.calendar.CalendarUnavailable):
-                seed.main()
-        firestore_client.assert_not_called()
-
 
 class QueueTests(unittest.TestCase):
     def setUp(self):

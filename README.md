@@ -95,7 +95,7 @@ Never commit the JSON credential, its decoded private key, or the environment-va
 
 ### 4. Configure the earnings calendar
 
-The earnings-calendar refresh is isolated in `earnings_calendar.py`. It requests Finnhub in seven-day windows, publishes four historical weeks plus the provider-approved 30-day future horizon, and ranks each date/session lane by a cached last-observed Profile 2 market capitalization. It requires two server-only secrets:
+The earnings-calendar refresh is isolated in `earnings_calendar.py`. It requests Finnhub in seven-day windows, publishes four historical weeks plus a configured 30-day future horizon, and ranks each date/session lane by a cached last-observed Profile 2 market capitalization. It requires two server-only secrets:
 
 ```text
 FINNHUB_API_KEY=<Finnhub API token>
@@ -122,29 +122,13 @@ if the file is absent, local environment variables remain supported. Render
 never reads the local file, even if one is accidentally present in its working
 directory. Do not put either secret in frontend files.
 
-Production refreshes also require non-secret permission evidence variables.
-They are validated before any provider request; private correspondence must
-remain outside the repository.
-
-```text
-EARNINGS_PROVIDER_PERMISSION_CONFIRMED=true
-EARNINGS_PROVIDER_PERMISSION_DATE=YYYY-MM-DD
-EARNINGS_PROVIDER_ACCOUNT_PLAN=<approved account or plan label>
-EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF=<internal correspondence reference>
-```
-
-Permission evidence is required on every host by default. Local emulator-only
-refreshes must opt in explicitly with `EARNINGS_CALENDAR_DEVELOPMENT_MODE=true`;
-development metadata never advertises caching, display, ranking, or
-redistribution permission when confirmation is absent.
-
 GitHub Actions runs `scripts/run_earnings_calendar_refresh.py` every four hours
 when the repository variable `EARNINGS_REFRESH_ENABLED` is set to `true`. Keep
 it unset or `false` during initial deployment, seeding, and manual verification.
 Calendar and profile attempts share a persisted 45-per-rolling-minute limiter,
 a renewable Firestore lease, and a 12-minute execution budget. Configure the
-two secrets and four permission variables in the backend repository before
-running the workflow. Also configure `EARNINGS_HEARTBEAT_URL` as the secret
+two secrets in the backend repository before running the workflow. Also
+configure `EARNINGS_HEARTBEAT_URL` as the secret
 ping URL from an external dead-man monitoring service. After each successful
 refresh the workflow verifies the public `checkedAt` heartbeat and pings that
 service; a delayed, failed, dropped, or inactivity-disabled schedule therefore

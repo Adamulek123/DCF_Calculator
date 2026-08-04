@@ -332,19 +332,6 @@ class ProviderBehaviorTests(unittest.TestCase):
             now=checked + dt.timedelta(hours=8, minutes=1),
         ))
 
-    def test_permission_is_required_unless_development_mode_is_explicit(self):
-        keys = {
-            "EARNINGS_CALENDAR_DEVELOPMENT_MODE": "true",
-            "EARNINGS_PROVIDER_PERMISSION_CONFIRMED": "",
-            "EARNINGS_PROVIDER_PERMISSION_DATE": "",
-            "EARNINGS_PROVIDER_ACCOUNT_PLAN": "",
-            "EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF": "",
-        }
-        with mock.patch.dict(os.environ, keys, clear=False):
-            metadata = earnings_calendar._provider_permission_metadata()
-        self.assertFalse(metadata["confirmed"])
-        self.assertFalse(metadata["scope"]["serverSideCaching"])
-
     def test_complete_refresh_publishes_without_recording_budget_exhaustion(self):
         class FakeProviderLimiter:
             def __init__(self):
@@ -380,7 +367,6 @@ class ProviderBehaviorTests(unittest.TestCase):
                 "profileMax": 1,
                 "executionMaxSeconds": 120,
             }),
-            mock.patch.object(earnings_calendar, "_provider_permission_metadata", return_value={}),
             mock.patch.object(earnings_calendar, "_get_manifest", side_effect=[{}, {}]),
             mock.patch.object(earnings_calendar, "_acquire_lease", return_value=True),
             mock.patch.object(earnings_calendar, "_renew_lease", return_value=False),

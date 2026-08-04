@@ -49,10 +49,6 @@ jobs:
           EARNINGS_PROVIDER_REQUESTS_PER_MINUTE: "45"
           EARNINGS_PROFILE_MAX_PER_RUN: "25"
           EARNINGS_EXECUTION_MAX_SECONDS: "720"
-          EARNINGS_PROVIDER_PERMISSION_CONFIRMED: ${{ vars.EARNINGS_PROVIDER_PERMISSION_CONFIRMED }}
-          EARNINGS_PROVIDER_PERMISSION_DATE: ${{ vars.EARNINGS_PROVIDER_PERMISSION_DATE }}
-          EARNINGS_PROVIDER_ACCOUNT_PLAN: ${{ vars.EARNINGS_PROVIDER_ACCOUNT_PLAN }}
-          EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF: ${{ vars.EARNINGS_PROVIDER_PERMISSION_EVIDENCE_REF }}
         run: python scripts/run_earnings_calendar_refresh.py
       - name: Verify publication and notify external heartbeat
         if: steps.refresh.outputs.provider_checked == 'true'
