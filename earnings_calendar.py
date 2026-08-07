@@ -1822,6 +1822,9 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
                 "status": "overdue",
                 "checkedAt": _iso_utc((manifest or {}).get("checkedAt")),
                 "refreshAfter": _iso_utc((manifest or {}).get("refreshAfter")),
+                "refreshSequence": max(
+                    0, int((manifest or {}).get("refreshSequence") or 0)
+                ),
             })
             response.status_code = 503
             response.headers["Cache-Control"] = "no-store"
@@ -1831,6 +1834,7 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
             "status": "ok",
             "checkedAt": _iso_utc(manifest.get("checkedAt")),
             "refreshAfter": _iso_utc(manifest.get("refreshAfter")),
+            "refreshSequence": max(0, int(manifest.get("refreshSequence") or 0)),
         })
         response.headers["Cache-Control"] = "no-store"
         return response

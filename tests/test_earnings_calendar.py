@@ -808,6 +808,7 @@ class EarningsCalendarRouteTests(unittest.TestCase):
         manifest = self.db.collections[earnings_calendar.META_COLLECTION][earnings_calendar.META_DOCUMENT]
         manifest["checkedAt"] = "2026-08-03T10:00:00Z"
         manifest["refreshAfter"] = "2026-08-03T14:00:00Z"
+        manifest["refreshSequence"] = 42
         with mock.patch.object(
             earnings_calendar,
             "_utc_now",
@@ -816,6 +817,7 @@ class EarningsCalendarRouteTests(unittest.TestCase):
             response = self.client.get("/earnings-calendar/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["status"], "ok")
+        self.assertEqual(response.get_json()["refreshSequence"], 42)
 
     def test_week_route_safely_falls_back_for_duplicate_display_orders(self):
         week = self.db.collections[earnings_calendar.WEEK_COLLECTION]["2026-07-20"]
