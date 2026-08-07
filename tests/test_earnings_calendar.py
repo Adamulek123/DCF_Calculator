@@ -11,7 +11,7 @@ from flask import Flask
 
 import earnings_calendar
 from scripts import run_earnings_calendar_refresh as refresh_cli
-from scripts import notify_earnings_heartbeat as heartbeat_cli
+from scripts import verify_earnings_publication as publication_cli
 
 
 class FakeSnapshot:
@@ -118,15 +118,15 @@ class EarningsCalendarBuildTests(unittest.TestCase):
             with self.assertRaises(earnings_calendar.CalendarUnavailable):
                 earnings_calendar._runtime_config()
 
-    def test_workflow_has_pull_request_ci_and_external_runtime_headroom(self):
+    def test_workflow_has_pull_request_ci_and_publication_verification(self):
         workflow = (
             Path(__file__).parents[1] / ".github" / "workflows" / "refresh-earnings-calendar.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("pull_request:", workflow)
         self.assertIn("timeout-minutes: 25", workflow)
         self.assertIn('EARNINGS_EXECUTION_MAX_SECONDS: "720"', workflow)
-        self.assertIn("scripts/notify_earnings_heartbeat.py", workflow)
-        self.assertIn("secrets.EARNINGS_HEARTBEAT_URL", workflow)
+        self.assertIn("scripts/verify_earnings_publication.py", workflow)
+        self.assertNotIn("EARNINGS_HEARTBEAT_URL", workflow)
         self.assertIn("steps.refresh.outputs.provider_checked == 'true'", workflow)
 
     def test_scheduled_refresh_tolerance_prevents_delayed_cron_skip(self):
@@ -715,7 +715,7 @@ class RefreshCliTests(unittest.TestCase):
         self.assertIn("refresh_sequence=42", written)
 
 
-class HeartbeatCliTests(unittest.TestCase):
+class PublicationVerificationCliTests(unittest.TestCase):
     class Response(io.BytesIO):
         def __init__(self, payload, status=200):
             super().__init__(json.dumps(payload).encode())
@@ -733,31 +733,28 @@ class HeartbeatCliTests(unittest.TestCase):
             "refreshSequence": 41,
         })
         with mock.patch.dict(os.environ, {
-            "EARNINGS_HEARTBEAT_URL": "https://heartbeat.example",
             "EARNINGS_EXPECTED_CHECKED_AT": "2026-08-04T12:00:00Z",
             "EARNINGS_EXPECTED_REFRESH_SEQUENCE": "42",
         }, clear=False), mock.patch.object(
-            heartbeat_cli, "urlopen", return_value=health
+            publication_cli, "urlopen", return_value=health
         ) as urlopen:
             with self.assertRaisesRegex(RuntimeError, "checkedAt"):
-                heartbeat_cli.main()
+                publication_cli.main()
         self.assertEqual(urlopen.call_count, 1)
 
-    def test_matching_publication_pings_monitor(self):
+    def test_matching_publication_is_verified_without_external_monitor(self):
         payload = {
             "status": "ok", "checkedAt": "2026-08-04T12:00:00Z",
             "refreshSequence": 42,
         }
         with mock.patch.dict(os.environ, {
-            "EARNINGS_HEARTBEAT_URL": "https://heartbeat.example",
             "EARNINGS_EXPECTED_CHECKED_AT": payload["checkedAt"],
             "EARNINGS_EXPECTED_REFRESH_SEQUENCE": "42",
         }, clear=False), mock.patch.object(
-            heartbeat_cli, "urlopen",
-            side_effect=[self.Response(payload), self.Response({}, 204)],
+            publication_cli, "urlopen", return_value=self.Response(payload),
         ) as urlopen, mock.patch("builtins.print"):
-            self.assertEqual(heartbeat_cli.main(), 0)
-        self.assertEqual(urlopen.call_count, 2)
+            self.assertEqual(publication_cli.main(), 0)
+        self.assertEqual(urlopen.call_count, 1)
 
 
 class EarningsCalendarRouteTests(unittest.TestCase):

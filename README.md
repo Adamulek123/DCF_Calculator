@@ -127,12 +127,10 @@ when the repository variable `EARNINGS_REFRESH_ENABLED` is set to `true`. Keep
 it unset or `false` during initial deployment, seeding, and manual verification.
 Calendar and profile attempts share a persisted 45-per-rolling-minute limiter,
 a renewable Firestore lease, and a 12-minute execution budget. Configure the
-two secrets in the backend repository before running the workflow. Also
-configure `EARNINGS_HEARTBEAT_URL` as the secret
-ping URL from an external dead-man monitoring service. After each successful
-refresh the workflow verifies the public `checkedAt` heartbeat and pings that
-service; a delayed, failed, dropped, or inactivity-disabled schedule therefore
-misses its external deadline and alerts independently of GitHub. Deploy
+two secrets in the backend repository before running the workflow. After each
+successful provider check, the workflow verifies that the production health
+endpoint exposes the exact `checkedAt` and `refreshSequence` values from that
+run. GitHub reports a failed run if publication cannot be confirmed. Deploy
 `firestore.indexes.json` once so the compact
 `issuers` map is exempt from indexing.
 
@@ -244,9 +242,9 @@ User-owned and account feature routes require a Firebase bearer token. The healt
 | `GET` | `/earnings-calendar/weeks/<weekStart>/events/<eventId>/estimates?revision=<weekRevision>` | 120/minute | Public fiscal-period, EPS, and revenue estimates for one selected calendar event |
 | `POST` | `/internal/earnings-calendar/refresh` | 12/hour | Secret-protected Finnhub refresh and changed-only Firestore publish |
 
-The scheduled workflow verifies `/earnings-calendar/health` before pinging the
-configured external dead-man monitor. A conventional uptime monitor may also
-alert directly on a non-200 response from this endpoint.
+The scheduled workflow verifies `/earnings-calendar/health` against the exact
+refresh result before reporting success. It does not require an external
+heartbeat-monitoring service.
 
 The weekly response intentionally excludes `fiscalYear`, `fiscalQuarter`,
 `epsEstimate`, and `revenueEstimate`. A refresh stores those fields in a
