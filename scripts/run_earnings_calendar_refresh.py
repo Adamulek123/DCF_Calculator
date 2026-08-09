@@ -16,7 +16,12 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from earnings_calendar import CalendarError, refresh_earnings_calendar  # noqa: E402
+from earnings_calendar import (  # noqa: E402
+    CalendarError,
+    ProviderError,
+    provider_error_fields,
+    refresh_earnings_calendar,
+)
 
 
 SUCCESS_STATUSES = {"fresh", "refresh_in_progress", "unchanged", "updated"}
@@ -77,12 +82,20 @@ def main() -> int:
     try:
         result = refresh_earnings_calendar(db)
     except CalendarError as exc:
+        failure_fields = (
+            provider_error_fields(exc)
+            if isinstance(exc, ProviderError)
+            else {
+                "code": exc.code,
+                "diagnosticReason": getattr(exc, "reason", None),
+                "message": str(exc),
+            }
+        )
         _write_result(
             {
                 "event": "earnings_calendar_refresh",
                 "status": "failed",
-                "code": exc.code,
-                "message": str(exc),
+                **failure_fields,
             }
         )
         return 1
