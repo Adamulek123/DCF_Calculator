@@ -140,6 +140,7 @@ class ProviderError(CalendarError):
     def __init__(self, message, reason=None):
         super().__init__(message)
         self.reason = reason
+        self.fetch_diagnostics = None
 
 
 class ProviderValidationError(ProviderError):
@@ -646,6 +647,42 @@ class PersistentProviderLimiter:
         )
         return max(0, int(usable / self.minimum_spacing))
 
+    def can_fit_before_deadline(self, logical_requests):
+        """Estimate whether persisted limiter state can fit the minimum request pass."""
+        logical_requests = max(0, int(logical_requests or 0))
+        if logical_requests == 0:
+            return True
+
+        ref = self.db.collection(META_COLLECTION).document(RATE_STATE_DOCUMENT)
+        snapshot = _bounded_get(ref, self.deadline, "rate capacity read")
+        state = _document_dict(snapshot) or {}
+        now = _snapshot_server_time(snapshot)
+        blocked_until = _parse_datetime(state.get("blockedUntil"))
+        recent_attempts = list(state.get("recentAttempts", []))
+        committed_attempt = _parse_datetime(state.get("lastAttemptAt"))
+        if committed_attempt:
+            if recent_attempts:
+                recent_attempts[-1] = committed_attempt
+            else:
+                recent_attempts.append(committed_attempt)
+
+        cursor = now
+        recent = recent_attempts
+        for _ in range(logical_requests):
+            wait_seconds, recent = provider_reservation_delay(
+                recent,
+                cursor,
+                self.limit,
+                self.minimum_spacing,
+                blocked_until,
+            )
+            cursor += dt.timedelta(seconds=wait_seconds)
+            recent.append(cursor)
+
+        minimum_wait = max(0.0, (cursor - now).total_seconds())
+        request_seconds = FINNHUB_CONNECT_TIMEOUT_SECONDS + FINNHUB_READ_TIMEOUT_SECONDS
+        return self.deadline - time.monotonic() > minimum_wait + request_seconds
+
     def request_timeouts(self):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
@@ -714,6 +751,29 @@ def _new_calendar_fetch_diagnostics():
         "exactRangeValidationFailures": 0,
         "rateLimitDeferrals": 0,
     }
+
+
+def _copy_calendar_fetch_diagnostics(diagnostics):
+    copied = dict(diagnostics or {})
+    copied["strategyCounts"] = dict(copied.get("strategyCounts") or {})
+    return copied
+
+
+def provider_error_fields(exc):
+    """Return the bounded terminal provider fields shared by refresh entry points."""
+    raw_diagnostics = getattr(exc, "fetch_diagnostics", None)
+    diagnostics = (
+        _copy_calendar_fetch_diagnostics(raw_diagnostics)
+        if raw_diagnostics
+        else {}
+    )
+    diagnostics.update({
+        "code": getattr(exc, "code", "provider_error"),
+        "diagnosticReason": getattr(exc, "reason", None),
+        "reason": str(exc),
+        "message": str(exc),
+    })
+    return diagnostics
 
 
 def _fetch_finnhub_calendar_range(
@@ -851,8 +911,14 @@ def _require_calendar_capacity(limiter, deadline, logical_requests):
             "Provider budget cannot fit a complete calendar consistency pass.",
             reason="calendar_fallback_budget_exhausted",
         )
+    can_fit = getattr(limiter, "can_fit_before_deadline", None)
     remaining = getattr(limiter, "remaining_before_deadline", None)
-    if callable(remaining) and remaining() < logical_requests:
+    insufficient = (
+        not can_fit(logical_requests)
+        if callable(can_fit)
+        else callable(remaining) and remaining() < logical_requests
+    )
+    if insufficient:
         raise ProviderBudgetExhausted(
             "Provider budget cannot fit a complete calendar consistency pass.",
             reason="calendar_fallback_budget_exhausted",
@@ -912,32 +978,36 @@ def fetch_finnhub_calendar(
         raise CalendarUnavailable("FINNHUB_API_KEY is not configured.")
     deadline = deadline or (time.monotonic() + DEFAULT_EXECUTION_MAX_SECONDS - PUBLICATION_RESERVE_SECONDS)
     diagnostics = _new_calendar_fetch_diagnostics()
-    all_events = []
-    cursor = coverage_start
-    while cursor <= coverage_end:
-        window_end = min(coverage_end, cursor + dt.timedelta(days=FINNHUB_WINDOW_DAYS - 1))
-        if manual:
-            parent = _fetch_finnhub_calendar_range(
-                api_key, cursor, window_end, http_get, limiter, deadline, diagnostics
-            )
-            if not parent["denseWarning"]:
-                diagnostics["strategyCounts"]["parent_accepted"] += 1
-                all_events.extend(parent["events"])
-            else:
-                diagnostics["strategyCounts"]["parent_daily_fallback"] += 1
-                _require_calendar_capacity(
-                    limiter, deadline, (window_end - cursor).days + 2
+    try:
+        all_events = []
+        cursor = coverage_start
+        while cursor <= coverage_end:
+            window_end = min(coverage_end, cursor + dt.timedelta(days=FINNHUB_WINDOW_DAYS - 1))
+            consistency_requests = (window_end - cursor).days + 2
+            if manual:
+                parent = _fetch_finnhub_calendar_range(
+                    api_key, cursor, window_end, http_get, limiter, deadline, diagnostics
                 )
+                if not parent["denseWarning"]:
+                    diagnostics["strategyCounts"]["parent_accepted"] += 1
+                    all_events.extend(parent["events"])
+                else:
+                    diagnostics["strategyCounts"]["parent_daily_fallback"] += 1
+                    _require_calendar_capacity(limiter, deadline, consistency_requests)
+                    all_events.extend(_fetch_consistent_daily_partition(
+                        api_key, cursor, window_end, http_get, limiter, deadline, diagnostics
+                    ))
+            else:
+                diagnostics["strategyCounts"]["daily_scheduled"] += 1
+                _require_calendar_capacity(limiter, deadline, consistency_requests)
                 all_events.extend(_fetch_consistent_daily_partition(
                     api_key, cursor, window_end, http_get, limiter, deadline, diagnostics
                 ))
-        else:
-            diagnostics["strategyCounts"]["daily_scheduled"] += 1
-            all_events.extend(_fetch_consistent_daily_partition(
-                api_key, cursor, window_end, http_get, limiter, deadline, diagnostics
-            ))
-        cursor = window_end + dt.timedelta(days=1)
-    return {"earningsCalendar": all_events, "_fetchDiagnostics": diagnostics}
+            cursor = window_end + dt.timedelta(days=1)
+        return {"earningsCalendar": all_events, "_fetchDiagnostics": diagnostics}
+    except ProviderError as exc:
+        exc.fetch_diagnostics = _copy_calendar_fetch_diagnostics(diagnostics)
+        raise
 
 
 def fetch_finnhub_profile(
@@ -2202,9 +2272,7 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
         except ProviderError as exc:
             _log(
                 "earnings_calendar_refresh_failed",
-                code=exc.code,
-                diagnosticReason=exc.reason,
-                reason=str(exc),
+                **provider_error_fields(exc),
             )
             message = "The calendar provider refresh failed." if _is_render() else str(exc)
             response = jsonify({"error": exc.code, "message": message})
@@ -2228,6 +2296,7 @@ __all__ = [
     "fetch_finnhub_profile",
     "load_constituents",
     "normalize_provider_payload",
+    "provider_error_fields",
     "refresh_earnings_calendar",
     "register_earnings_calendar_routes",
 ]
