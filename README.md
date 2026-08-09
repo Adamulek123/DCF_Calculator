@@ -134,6 +134,22 @@ run. GitHub reports a failed run if publication cannot be confirmed. Deploy
 `firestore.indexes.json` once so the compact
 `issuers` map is exempt from indexing.
 
+Scheduled refreshes fetch each calendar date separately inside every seven-day
+group, then compare that daily union with a fresh seven-day response. Manual
+HTTP refreshes keep the faster parent-only path unless the parent contains at
+least 1,500 events, in which case they use the same verified daily collection.
+The 1,500-event boundary is an observed Finnhub density warning, not a documented
+API limit or completeness guarantee. A dense one-day response or a parent event
+missing from the daily union fails the refresh; one fully fresh consistency pass
+is retried before giving up. Failed candidates are never published.
+
+A normal scheduled coverage window therefore uses roughly 68-75 calendar
+requests before transport retries. Those requests consume the same persisted
+provider budget as profile refreshes, so fewer profiles may be refreshed during
+an earnings-calendar run. Finnhub does not expose pagination totals or a stable
+snapshot identifier, so this strategy is a strong loss-detection mitigation,
+not proof that a sequential result is complete or snapshot-consistent.
+
 When using the workspace-root `start_backend.bat`, this setup is guided on its
 first run: the launcher creates the ignored file, generates the local refresh
 secret, and opens the file so you only need to paste the Finnhub key. It then

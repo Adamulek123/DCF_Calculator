@@ -75,6 +75,7 @@ REFRESH_INTERVAL = dt.timedelta(hours=4)
 LEASE_DURATION = dt.timedelta(minutes=5)
 LEASE_RENEW_BEFORE = dt.timedelta(minutes=2)
 FINNHUB_WINDOW_DAYS = 7
+FINNHUB_CALENDAR_OBSERVED_CAP = 1_500
 FINNHUB_CONNECT_TIMEOUT_SECONDS = 5
 FINNHUB_READ_TIMEOUT_SECONDS = 10
 DEFAULT_FUTURE_COVERAGE_DAYS = 30
@@ -88,7 +89,7 @@ MAX_FIRESTORE_DOCUMENT_BYTES = 900_000
 MAX_PUBLICATION_TRANSACTION_BYTES = 8_000_000
 SCHEDULED_REFRESH_TOLERANCE = dt.timedelta(minutes=30)
 MIN_PUBLICATION_SECONDS = 5.0
-INGESTION_VERSION = 4
+INGESTION_VERSION = 5
 MIN_INITIAL_MATCHED_EVENTS = 25
 MIN_MATCHED_RAW_RATIO = 0.02
 
@@ -135,6 +136,10 @@ class ConstituentValidationError(CalendarUnavailable):
 
 class ProviderError(CalendarError):
     code = "provider_error"
+
+    def __init__(self, message, reason=None):
+        super().__init__(message)
+        self.reason = reason
 
 
 class ProviderValidationError(ProviderError):
@@ -691,6 +696,209 @@ def _provider_retry_delay(attempt):
     return (0.25 * (2 ** attempt)) + random.uniform(0.0, 0.25)
 
 
+def _new_calendar_fetch_diagnostics():
+    return {
+        "strategyCounts": {
+            "daily_scheduled": 0,
+            "parent_accepted": 0,
+            "parent_daily_fallback": 0,
+        },
+        "logicalRangeFetches": 0,
+        "calendarHttpAttempts": 0,
+        "largestResponseCount": 0,
+        "denseResponseCount": 0,
+        "consistencyRetryCount": 0,
+        "parentIdentityCount": 0,
+        "dailyIdentityCount": 0,
+        "missingParentIdentityCount": 0,
+        "exactRangeValidationFailures": 0,
+        "rateLimitDeferrals": 0,
+    }
+
+
+def _fetch_finnhub_calendar_range(
+    api_key,
+    range_start,
+    range_end,
+    http_get=requests.get,
+    limiter=None,
+    deadline=None,
+    diagnostics=None,
+):
+    if not api_key:
+        raise CalendarUnavailable("FINNHUB_API_KEY is not configured.")
+    diagnostics = diagnostics if diagnostics is not None else _new_calendar_fetch_diagnostics()
+    deadline = deadline or (time.monotonic() + DEFAULT_EXECUTION_MAX_SECONDS - PUBLICATION_RESERVE_SECONDS)
+    diagnostics["logicalRangeFetches"] += 1
+    params = {
+        "from": range_start.isoformat(),
+        "to": range_end.isoformat(),
+        "international": "false",
+        "token": api_key,
+    }
+    last_error = None
+    for attempt in range(2):
+        diagnostics["calendarHttpAttempts"] += 1
+        try:
+            if limiter:
+                limiter.acquire("calendar")
+                connect_timeout, read_timeout = limiter.request_timeouts()
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= FINNHUB_CONNECT_TIMEOUT_SECONDS + FINNHUB_READ_TIMEOUT_SECONDS:
+                    raise ProviderBudgetExhausted(
+                        "Finnhub refresh exceeded its safe execution deadline."
+                    )
+                connect_timeout = min(FINNHUB_CONNECT_TIMEOUT_SECONDS, max(0.5, remaining / 3))
+                read_timeout = min(FINNHUB_READ_TIMEOUT_SECONDS, max(0.5, remaining - connect_timeout))
+            response = http_get(
+                FINNHUB_CALENDAR_URL,
+                params=params,
+                timeout=(connect_timeout, read_timeout),
+            )
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt == 0:
+                time.sleep(_provider_retry_delay(attempt))
+                continue
+            raise ProviderError("Finnhub could not be reached.") from exc
+        if limiter:
+            limiter.observe_response(response.headers)
+        if response.status_code == 429:
+            retry_after = _response_retry_after(response) or None
+            if limiter:
+                limiter.defer(retry_after or 60)
+                diagnostics["rateLimitDeferrals"] += 1
+            raise ProviderRateLimited("calendar_rate_limited", retry_after=retry_after)
+        if response.status_code >= 500 and attempt == 0:
+            time.sleep(_provider_retry_delay(attempt))
+            continue
+        if response.status_code != 200:
+            raise ProviderError(f"Finnhub returned HTTP {response.status_code}.")
+        content_type = str(response.headers.get("Content-Type") or "").lower()
+        if "application/json" not in content_type:
+            raise ProviderValidationError("Finnhub returned an unexpected content type.")
+        try:
+            payload = response.json()
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise ProviderValidationError("Finnhub returned invalid JSON.") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("earningsCalendar"), list):
+            raise ProviderValidationError("Finnhub returned an unexpected response schema.")
+        events = payload["earningsCalendar"]
+        for index, event in enumerate(events):
+            if not isinstance(event, dict):
+                diagnostics["exactRangeValidationFailures"] += 1
+                raise ProviderValidationError(
+                    f"Finnhub event {index} is not an object.",
+                    reason="calendar_event_outside_requested_range",
+                )
+            try:
+                event_date = _parse_date(event.get("date"), f"event[{index}].date")
+            except ValueError as exc:
+                diagnostics["exactRangeValidationFailures"] += 1
+                raise ProviderValidationError(
+                    str(exc), reason="calendar_event_outside_requested_range"
+                ) from exc
+            if event_date < range_start or event_date > range_end:
+                diagnostics["exactRangeValidationFailures"] += 1
+                raise ProviderValidationError(
+                    "Finnhub returned an event outside the requested range.",
+                    reason="calendar_event_outside_requested_range",
+                )
+        count = len(events)
+        dense_warning = count >= FINNHUB_CALENDAR_OBSERVED_CAP
+        diagnostics["largestResponseCount"] = max(diagnostics["largestResponseCount"], count)
+        diagnostics["denseResponseCount"] += int(dense_warning)
+        return {
+            "events": events,
+            "rangeStart": range_start,
+            "rangeEnd": range_end,
+            "eventCount": count,
+            "denseWarning": dense_warning,
+        }
+    raise ProviderError("Finnhub refresh failed.") from last_error
+
+
+def _raw_calendar_identity(event):
+    return (
+        str(event.get("symbol") or "").strip().upper(),
+        _parse_date(event.get("date"), "event.date").isoformat(),
+        _safe_int(event.get("year"), 1900, 2200),
+        _safe_int(event.get("quarter"), 1, 4),
+    )
+
+
+def _fetch_daily_partition(api_key, range_start, range_end, http_get, limiter, deadline, diagnostics):
+    events = []
+    cursor = range_start
+    while cursor <= range_end:
+        result = _fetch_finnhub_calendar_range(
+            api_key, cursor, cursor, http_get, limiter, deadline, diagnostics
+        )
+        if result["denseWarning"]:
+            raise ProviderValidationError(
+                "Finnhub returned a dense response for an irreducible one-day range.",
+                reason="calendar_daily_observed_sentinel",
+            )
+        events.extend(result["events"])
+        cursor += dt.timedelta(days=1)
+    return events
+
+
+def _require_calendar_capacity(limiter, deadline, logical_requests):
+    if deadline - time.monotonic() <= FINNHUB_CONNECT_TIMEOUT_SECONDS + FINNHUB_READ_TIMEOUT_SECONDS:
+        raise ProviderBudgetExhausted(
+            "Provider budget cannot fit a complete calendar consistency pass.",
+            reason="calendar_fallback_budget_exhausted",
+        )
+    remaining = getattr(limiter, "remaining_before_deadline", None)
+    if callable(remaining) and remaining() < logical_requests:
+        raise ProviderBudgetExhausted(
+            "Provider budget cannot fit a complete calendar consistency pass.",
+            reason="calendar_fallback_budget_exhausted",
+        )
+
+
+def _calendar_consistency_pass(
+    api_key, range_start, range_end, http_get, limiter, deadline, diagnostics
+):
+    daily_events = _fetch_daily_partition(
+        api_key, range_start, range_end, http_get, limiter, deadline, diagnostics
+    )
+    parent = _fetch_finnhub_calendar_range(
+        api_key, range_start, range_end, http_get, limiter, deadline, diagnostics
+    )
+    daily_identities = {_raw_calendar_identity(event) for event in daily_events}
+    parent_identities = {_raw_calendar_identity(event) for event in parent["events"]}
+    missing = parent_identities - daily_identities
+    diagnostics["parentIdentityCount"] += len(parent_identities)
+    diagnostics["dailyIdentityCount"] += len(daily_identities)
+    diagnostics["missingParentIdentityCount"] += len(missing)
+    return daily_events, missing
+
+
+def _fetch_consistent_daily_partition(
+    api_key, range_start, range_end, http_get, limiter, deadline, diagnostics
+):
+    daily_events, missing = _calendar_consistency_pass(
+        api_key, range_start, range_end, http_get, limiter, deadline, diagnostics
+    )
+    if not missing:
+        return daily_events
+    diagnostics["consistencyRetryCount"] += 1
+    _require_calendar_capacity(limiter, deadline, (range_end - range_start).days + 2)
+    daily_events, missing = _calendar_consistency_pass(
+        api_key, range_start, range_end, http_get, limiter, deadline, diagnostics
+    )
+    if missing:
+        sample = sorted(missing, key=repr)[:5]
+        raise ProviderValidationError(
+            f"Finnhub parent and daily responses remained inconsistent ({len(missing)} missing; sample={sample}).",
+            reason="calendar_parent_child_inconsistent",
+        )
+    return daily_events
+
+
 def fetch_finnhub_calendar(
     api_key,
     coverage_start,
@@ -698,72 +906,38 @@ def fetch_finnhub_calendar(
     http_get=requests.get,
     limiter=None,
     deadline=None,
+    manual=False,
 ):
     if not api_key:
         raise CalendarUnavailable("FINNHUB_API_KEY is not configured.")
+    deadline = deadline or (time.monotonic() + DEFAULT_EXECUTION_MAX_SECONDS - PUBLICATION_RESERVE_SECONDS)
+    diagnostics = _new_calendar_fetch_diagnostics()
     all_events = []
     cursor = coverage_start
-    deadline = deadline or (time.monotonic() + DEFAULT_EXECUTION_MAX_SECONDS - PUBLICATION_RESERVE_SECONDS)
     while cursor <= coverage_end:
         window_end = min(coverage_end, cursor + dt.timedelta(days=FINNHUB_WINDOW_DAYS - 1))
-        params = {
-            "from": cursor.isoformat(),
-            "to": window_end.isoformat(),
-            "international": "false",
-            "token": api_key,
-        }
-        last_error = None
-        for attempt in range(2):
-            try:
-                if limiter:
-                    limiter.acquire("calendar")
-                    connect_timeout, read_timeout = limiter.request_timeouts()
-                else:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= FINNHUB_CONNECT_TIMEOUT_SECONDS + FINNHUB_READ_TIMEOUT_SECONDS:
-                        raise ProviderBudgetExhausted(
-                            "Finnhub refresh exceeded its safe execution deadline."
-                        )
-                    connect_timeout = min(FINNHUB_CONNECT_TIMEOUT_SECONDS, max(0.5, remaining / 3))
-                    read_timeout = min(FINNHUB_READ_TIMEOUT_SECONDS, max(0.5, remaining - connect_timeout))
-                response = http_get(
-                    FINNHUB_CALENDAR_URL,
-                    params=params,
-                    timeout=(connect_timeout, read_timeout),
+        if manual:
+            parent = _fetch_finnhub_calendar_range(
+                api_key, cursor, window_end, http_get, limiter, deadline, diagnostics
+            )
+            if not parent["denseWarning"]:
+                diagnostics["strategyCounts"]["parent_accepted"] += 1
+                all_events.extend(parent["events"])
+            else:
+                diagnostics["strategyCounts"]["parent_daily_fallback"] += 1
+                _require_calendar_capacity(
+                    limiter, deadline, (window_end - cursor).days + 2
                 )
-            except requests.RequestException as exc:
-                last_error = exc
-                if attempt == 0:
-                    time.sleep(_provider_retry_delay(attempt))
-                    continue
-                raise ProviderError("Finnhub could not be reached.") from exc
-            if limiter:
-                limiter.observe_response(response.headers)
-            if response.status_code == 429:
-                retry_after = _response_retry_after(response) or None
-                if limiter:
-                    limiter.defer(retry_after or 60)
-                raise ProviderRateLimited("calendar_rate_limited", retry_after=retry_after)
-            if response.status_code >= 500 and attempt == 0:
-                time.sleep(_provider_retry_delay(attempt))
-                continue
-            if response.status_code != 200:
-                raise ProviderError(f"Finnhub returned HTTP {response.status_code}.")
-            content_type = str(response.headers.get("Content-Type") or "").lower()
-            if "application/json" not in content_type:
-                raise ProviderValidationError("Finnhub returned an unexpected content type.")
-            try:
-                payload = response.json()
-            except (ValueError, json.JSONDecodeError) as exc:
-                raise ProviderValidationError("Finnhub returned invalid JSON.") from exc
-            if not isinstance(payload, dict) or not isinstance(payload.get("earningsCalendar"), list):
-                raise ProviderValidationError("Finnhub returned an unexpected response schema.")
-            all_events.extend(payload["earningsCalendar"])
-            break
+                all_events.extend(_fetch_consistent_daily_partition(
+                    api_key, cursor, window_end, http_get, limiter, deadline, diagnostics
+                ))
         else:
-            raise ProviderError("Finnhub refresh failed.") from last_error
+            diagnostics["strategyCounts"]["daily_scheduled"] += 1
+            all_events.extend(_fetch_consistent_daily_partition(
+                api_key, cursor, window_end, http_get, limiter, deadline, diagnostics
+            ))
         cursor = window_end + dt.timedelta(days=1)
-    return {"earningsCalendar": all_events}
+    return {"earningsCalendar": all_events, "_fetchDiagnostics": diagnostics}
 
 
 def fetch_finnhub_profile(
@@ -1512,7 +1686,10 @@ def refresh_earnings_calendar(
             http_get=http_get,
             limiter=limiter,
             deadline=provider_deadline,
+            manual=manual,
         )
+        fetch_diagnostics = dict(payload.get("_fetchDiagnostics") or {})
+        fetch_diagnostics.pop("calendarHttpAttempts", None)
         events, provider_counts = normalize_provider_payload(
             payload,
             constituents,
@@ -1711,6 +1888,7 @@ def refresh_earnings_calendar(
             storageGeneration=candidate_snapshot["storageGeneration"],
             constituentVersion=constituents["metadata"]["version"],
             snapshotApproximateJsonBytes=len(json.dumps(candidate_snapshot, separators=(",", ":")).encode()),
+            **fetch_diagnostics,
             **provider_counts,
         )
         return {
@@ -2022,7 +2200,12 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
             response = jsonify({"error": exc.code, "message": str(exc)})
             response.status_code = 503
         except ProviderError as exc:
-            _log("earnings_calendar_refresh_failed", code=exc.code, reason=str(exc))
+            _log(
+                "earnings_calendar_refresh_failed",
+                code=exc.code,
+                diagnosticReason=exc.reason,
+                reason=str(exc),
+            )
             message = "The calendar provider refresh failed." if _is_render() else str(exc)
             response = jsonify({"error": exc.code, "message": message})
             response.status_code = 502

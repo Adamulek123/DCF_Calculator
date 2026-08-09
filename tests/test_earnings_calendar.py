@@ -421,6 +421,199 @@ class ProviderBehaviorTests(unittest.TestCase):
         self.assertNotIn("consecutiveFailures", record)
 
 
+class CalendarFetchStrategyTests(unittest.TestCase):
+    class Response:
+        def __init__(self, events, status_code=200, headers=None):
+            self.status_code = status_code
+            self.headers = headers or {"Content-Type": "application/json"}
+            self._events = events
+
+        def json(self):
+            return {"earningsCalendar": self._events}
+
+    @staticmethod
+    def event(symbol, report_date, **changes):
+        return {
+            "symbol": symbol,
+            "date": report_date.isoformat(),
+            "year": 2026,
+            "quarter": 2,
+            **changes,
+        }
+
+    def test_range_validation_is_exact_and_inclusive(self):
+        day = dt.date(2026, 8, 3)
+        accepted = earnings_calendar._fetch_finnhub_calendar_range(
+            "key", day, day, http_get=lambda *_args, **_kwargs: self.Response([
+                self.event("PLTR", day)
+            ]), deadline=float("inf")
+        )
+        self.assertEqual(accepted["eventCount"], 1)
+
+        with self.assertRaises(earnings_calendar.ProviderValidationError) as raised:
+            earnings_calendar._fetch_finnhub_calendar_range(
+                "key", day, day, http_get=lambda *_args, **_kwargs: self.Response([
+                    self.event("PLTR", day + dt.timedelta(days=1))
+                ]), deadline=float("inf")
+            )
+        self.assertEqual(raised.exception.reason, "calendar_event_outside_requested_range")
+
+    def test_observed_cap_uses_greater_than_or_equal(self):
+        day = dt.date(2026, 8, 3)
+        for count, expected in ((1499, False), (1500, True), (1501, True)):
+            with self.subTest(count=count):
+                events = [self.event(f"S{index}", day) for index in range(count)]
+                result = earnings_calendar._fetch_finnhub_calendar_range(
+                    "key", day, day,
+                    http_get=lambda *_args, events=events, **_kwargs: self.Response(events),
+                    deadline=float("inf"),
+                )
+                self.assertEqual(result["denseWarning"], expected)
+
+    def test_manual_subthreshold_parent_uses_one_logical_request(self):
+        start = dt.date(2026, 8, 3)
+        calls = []
+
+        def get(_url, params, **_kwargs):
+            calls.append((params["from"], params["to"]))
+            return self.Response([self.event("PLTR", start)])
+
+        result = earnings_calendar.fetch_finnhub_calendar(
+            "key", start, start + dt.timedelta(days=6), get,
+            deadline=float("inf"), manual=True,
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result["_fetchDiagnostics"]["strategyCounts"]["parent_accepted"], 1)
+
+    def test_dense_manual_parent_falls_back_and_recovers_omitted_event(self):
+        start = dt.date(2026, 8, 3)
+        parent_events = [
+            self.event(f"S{index}", start + dt.timedelta(days=index % 7))
+            for index in range(1500)
+        ]
+        calls = []
+
+        def get(_url, params, **_kwargs):
+            calls.append((params["from"], params["to"]))
+            if params["from"] != params["to"]:
+                return self.Response(parent_events)
+            day = dt.date.fromisoformat(params["from"])
+            events = [event for event in parent_events if event["date"] == day.isoformat()]
+            if day == start:
+                events.append(self.event("PLTR", day))
+            return self.Response(events)
+
+        result = earnings_calendar.fetch_finnhub_calendar(
+            "key", start, start + dt.timedelta(days=6), get,
+            deadline=float("inf"), manual=True,
+        )
+        self.assertIn("PLTR", {event["symbol"] for event in result["earningsCalendar"]})
+        self.assertEqual(len(calls), 9)
+        self.assertEqual(
+            result["_fetchDiagnostics"]["strategyCounts"]["parent_daily_fallback"], 1
+        )
+
+    def test_scheduled_mode_fetches_daily_leaves_then_fresh_parent(self):
+        start = dt.date(2026, 8, 3)
+        first = self.event("A", start)
+        second = self.event("B", start + dt.timedelta(days=1))
+        calls = []
+
+        def get(_url, params, **_kwargs):
+            calls.append((params["from"], params["to"]))
+            if params["from"] == params["to"] == start.isoformat():
+                return self.Response([first])
+            if params["from"] == params["to"]:
+                return self.Response([second])
+            return self.Response([first, second])
+
+        result = earnings_calendar.fetch_finnhub_calendar(
+            "key", start, start + dt.timedelta(days=1), get, deadline=float("inf")
+        )
+        self.assertEqual(calls, [
+            ("2026-08-03", "2026-08-03"),
+            ("2026-08-04", "2026-08-04"),
+            ("2026-08-03", "2026-08-04"),
+        ])
+        self.assertEqual(len(result["earningsCalendar"]), 2)
+
+    def test_consistency_retry_refreshes_both_daily_and_parent(self):
+        day = dt.date(2026, 8, 3)
+        responses = iter([
+            [self.event("A", day)],
+            [self.event("B", day)],
+            [self.event("B", day)],
+            [self.event("B", day)],
+        ])
+        result = earnings_calendar.fetch_finnhub_calendar(
+            "key", day, day,
+            lambda *_args, **_kwargs: self.Response(next(responses)),
+            deadline=float("inf"),
+        )
+        self.assertEqual([event["symbol"] for event in result["earningsCalendar"]], ["B"])
+        self.assertEqual(result["_fetchDiagnostics"]["consistencyRetryCount"], 1)
+
+    def test_repeated_consistency_failure_fails_closed(self):
+        day = dt.date(2026, 8, 3)
+        responses = iter([
+            [self.event("A", day)], [self.event("B", day)],
+            [self.event("A", day)], [self.event("B", day)],
+        ])
+        with self.assertRaises(earnings_calendar.ProviderValidationError) as raised:
+            earnings_calendar.fetch_finnhub_calendar(
+                "key", day, day,
+                lambda *_args, **_kwargs: self.Response(next(responses)),
+                deadline=float("inf"),
+            )
+        self.assertEqual(raised.exception.reason, "calendar_parent_child_inconsistent")
+
+    def test_dense_daily_response_fails_closed(self):
+        day = dt.date(2026, 8, 3)
+        events = [self.event(f"S{index}", day) for index in range(1500)]
+        with self.assertRaises(earnings_calendar.ProviderValidationError) as raised:
+            earnings_calendar.fetch_finnhub_calendar(
+                "key", day, day,
+                lambda *_args, **_kwargs: self.Response(events),
+                deadline=float("inf"),
+            )
+        self.assertEqual(raised.exception.reason, "calendar_daily_observed_sentinel")
+
+    def test_comparison_identity_ignores_mutable_provider_attributes(self):
+        day = dt.date(2026, 8, 3)
+        original = self.event("pltr", day, hour=None, epsEstimate=1, epsActual=2)
+        changed = self.event("PLTR", day, hour="amc", epsEstimate=3, epsActual=4)
+        self.assertEqual(
+            earnings_calendar._raw_calendar_identity(original),
+            earnings_calendar._raw_calendar_identity(changed),
+        )
+
+    def test_transport_retry_is_distinct_from_logical_fetch(self):
+        day = dt.date(2026, 8, 3)
+        responses = iter([
+            self.Response([], status_code=500),
+            self.Response([self.event("PLTR", day)]),
+        ])
+        with mock.patch.object(earnings_calendar.time, "sleep"):
+            result = earnings_calendar.fetch_finnhub_calendar(
+                "key", day, day, lambda *_args, **_kwargs: next(responses),
+                deadline=float("inf"), manual=True,
+            )
+        diagnostics = result["_fetchDiagnostics"]
+        self.assertEqual(diagnostics["logicalRangeFetches"], 1)
+        self.assertEqual(diagnostics["calendarHttpAttempts"], 2)
+
+    def test_full_scheduled_coverage_uses_expected_request_volume(self):
+        start = dt.date(2026, 7, 6)
+        result = earnings_calendar.fetch_finnhub_calendar(
+            "key", start, start + dt.timedelta(days=58),
+            lambda *_args, **_kwargs: self.Response([]),
+            deadline=float("inf"),
+        )
+        diagnostics = result["_fetchDiagnostics"]
+        self.assertEqual(diagnostics["logicalRangeFetches"], 68)
+        self.assertEqual(diagnostics["calendarHttpAttempts"], 68)
+
+
 class FirestoreTransactionTests(unittest.TestCase):
     def setUp(self):
         self.now = dt.datetime(2026, 8, 3, 12, tzinfo=dt.timezone.utc)

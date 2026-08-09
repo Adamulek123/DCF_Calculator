@@ -82,6 +82,7 @@ def main() -> int:
                 "event": "earnings_calendar_refresh",
                 "status": "failed",
                 "code": exc.code,
+                "diagnosticReason": getattr(exc, "reason", None),
                 "message": str(exc),
             }
         )
