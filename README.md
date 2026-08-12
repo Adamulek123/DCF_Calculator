@@ -46,14 +46,17 @@ The repositories have separate Git histories and deployments. API-contract chang
 - Firebase Admin SDK for Cloud Firestore
 - `requests` and [Frankfurter](https://frankfurter.dev/) for exchange rates
 - Flask-CORS and Flask-Limiter
-- `edgartools` is installed/imported for EDGAR-related work, though the current public routes primarily use yfinance and Firestore
+- Reviewed Python 3.12 dependency pins in `requirements.txt`, with a hashed
+  transitive lock in `requirements.lock`
 
 ## Project structure
 
 ```text
 backend/
 ├── 123.py                    # Flask app, routes, auth middleware, and data access
-├── requirements.txt          # Python runtime dependencies
+├── .python-version           # Exact Render/local CPython runtime: 3.12.10
+├── requirements.txt          # Human-reviewed direct dependency pins
+├── requirements.lock         # Hashed CPython 3.12 Linux dependency lock
 └── all_exchanges_clean.json  # Ticker search and validation dataset
 ```
 
@@ -76,10 +79,21 @@ git clone https://github.com/Adamulek123/DCF_Calculator.git backend
 cd backend
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.lock
 ```
 
 On Windows PowerShell, activate the environment with `.venv\Scripts\Activate.ps1`.
+
+The lock is resolved for CPython 3.12 on the Linux platform used by CI and
+Render. If you develop on another Python/platform combination, use the exact
+direct pins in `requirements.txt` and regenerate/review the lock for that
+target before deploying.
+
+The checked-in `.python-version` pins CPython **3.12.10**. Configure the
+Render service environment with `PYTHON_VERSION=3.12.10` as well; the Render
+runtime, local interpreter, and CI must stay on that exact patch version when
+installing `requirements.lock`. If the runtime changes, regenerate and review
+the lock for the new CPython/platform target before deploying.
 
 ### 3. Configure Firebase Admin
 
@@ -189,7 +203,8 @@ python 123.py
 
 The server binds to `0.0.0.0` and uses the `PORT` environment variable, defaulting to `5000`. The frontend expects `http://localhost:5000` during local development.
 
-When 123.py is run directly, the backend automatically enables safe local emulator mode:
+Emulator mode is opt-in. Set `USE_FIREBASE_EMULATORS=1` before starting the
+backend when you intentionally want local Auth and Firestore emulators:
 
 - Firebase Auth: 127.0.0.1:9099
 - Cloud Firestore: 127.0.0.1:8080
@@ -199,15 +214,21 @@ Start both Firebase emulators before the backend:
 
     firebase emulators:start --only auth,firestore --project dcf123-b6cb1
 
-Gunicorn and Render do not enable this mode automatically. Set USE_FIREBASE_EMULATORS=0 only when you deliberately want direct local execution to use production Firebase credentials.
+Without that flag, inherited emulator host variables are cleared and the
+process uses the configured service-account credentials (or reports Firebase
+as unavailable when no credentials are configured). Production refuses
+emulator configuration.
 
-Check the unauthenticated health endpoint:
+Check the unauthenticated liveness endpoint:
 
 ```bash
-curl http://localhost:5000/
+curl http://localhost:5000/live
 ```
 
-It should return `Running`.
+It should return `{"status":"live"}`. `/ready` checks ticker data, Firebase,
+Firestore, and the production shared rate-limit backend and returns `503` with
+individual check results until all required dependencies are available. `/`
+remains a legacy `Running` health response.
 
 To populate the local Firestore emulator from Finnhub, use the same local
 refresh secret from `local_secrets.json`:
@@ -235,7 +256,9 @@ Authorization: Bearer <firebase-id-token>
 
 Protected routes use Firebase Admin signature, issuer, audience, expiry, revocation, and disabled-user checks. The UID comes only from the verified token, and unverified email/password accounts are rejected. Missing, invalid, expired, revoked, and disabled-user tokens return 401; unverified email accounts return 403; unavailable Firebase Admin configuration returns 503.
 
-Local direct execution configures Auth and Firestore emulators automatically. For Flask CLI or another imported development runner, set USE_FIREBASE_EMULATORS=1 explicitly.
+Local direct execution uses real Firebase configuration unless
+`USE_FIREBASE_EMULATORS=1` is explicitly set. The same opt-in applies to the
+Flask CLI and other imported development runners.
 
 ## API
 
@@ -245,7 +268,9 @@ User-owned and account feature routes require a Firebase bearer token. The healt
 
 | Method | Route | Rate limit | Description |
 | --- | --- | --- | --- |
-| `GET` | `/` | default | Health check; returns `Running` |
+| `GET` | `/live` | default | Liveness check; returns 200 while the process is running |
+| `GET` | `/ready` | default | Readiness check; returns 200 only when required startup dependencies are available, otherwise 503 |
+| `GET` | `/` | default | Legacy compatibility health response; returns `Running` |
 | `GET` | `/get_tickers` | default | Returns the in-memory contents of `all_exchanges_clean.json` |
 
 ### Earnings calendar
@@ -462,7 +487,8 @@ A typical Render configuration for the current repository is:
 
 ```text
 Runtime:       Python
-Build command: pip install -r requirements.txt
+PYTHON_VERSION: 3.12.10
+Build command: pip install --require-hashes -r requirements.lock
 Start command: gunicorn 123:app
 Environment:   FIREBASE_SERVICE_ACCOUNT_KEY_BASE64=<secret>
                FINNHUB_API_KEY=<secret>
@@ -476,7 +502,8 @@ Render supplies `PORT`; do not hard-code a production port. The rate limiter cur
 - CORS accepts only configured origins. CORS_ALLOWED_ORIGINS is a comma-separated override; defaults are https://adamulek123.github.io, http://localhost:8000, and http://127.0.0.1:8000.
 - API errors are returned as JSON, but keys vary between error and message; internal exception details are logged server-side rather than returned to clients.
 - Keep route names, methods, query parameters, request bodies, and response fields synchronized with `../frontend/js/`.
-- There is currently no automated backend test suite. Test the health route, authentication failure cases, the changed endpoint, and its frontend caller before committing.
+- Run the checked-in `unittest` suite with `python -m unittest discover -s tests -p "test_*.py"`. It covers earnings ingestion plus mocked authentication, watchlist, portfolio, quote, and hardening regressions; still exercise changed routes with controlled emulator data where integration behavior matters.
+- CI installs the reviewed, hashed `requirements.lock`, compiles all backend modules, and discovers every `test_*.py` module. When direct pins change, regenerate and review the lock before merging.
 - Avoid using production Firestore documents for incidental tests; use controlled data or Firebase emulators where available.
 # Optional shared cache
 

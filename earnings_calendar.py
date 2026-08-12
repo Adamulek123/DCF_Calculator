@@ -21,6 +21,7 @@ import types
 import uuid
 from collections import defaultdict
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import requests
@@ -78,6 +79,14 @@ FINNHUB_WINDOW_DAYS = 7
 FINNHUB_CALENDAR_OBSERVED_CAP = 1_500
 FINNHUB_CONNECT_TIMEOUT_SECONDS = 5
 FINNHUB_READ_TIMEOUT_SECONDS = 10
+FINNHUB_ALLOWED_HOSTS = frozenset({"finnhub.io", "www.finnhub.io"})
+# Keep upstream response handling bounded even when the provider omits a
+# Content-Length header. Normal calendar responses are much smaller.
+MAX_FINNHUB_RESPONSE_BYTES = 2_000_000
+MAX_FINNHUB_EVENTS_PER_RESPONSE = 10_000
+MAX_FINNHUB_EVENT_FIELDS = 32
+MAX_FINNHUB_STRING_FIELD_LENGTH = 256
+MAX_PROVIDER_RETRY_AFTER_SECONDS = 3_600.0
 DEFAULT_FUTURE_COVERAGE_DAYS = 30
 MAX_PROVIDER_SUPPORTED_FUTURE_DAYS = 30
 DEFAULT_PROVIDER_REQUESTS_PER_MINUTE = 45
@@ -90,8 +99,26 @@ MAX_PUBLICATION_TRANSACTION_BYTES = 8_000_000
 SCHEDULED_REFRESH_TOLERANCE = dt.timedelta(minutes=30)
 MIN_PUBLICATION_SECONDS = 5.0
 INGESTION_VERSION = 5
+# Keep a small baseline for ordinary candidate shape validation. A first
+# publication has no retained weeks against which to compare, so it also
+# needs an absolute, coverage-aware floor below.
 MIN_INITIAL_MATCHED_EVENTS = 25
-MIN_MATCHED_RAW_RATIO = 0.02
+MIN_BOOTSTRAP_MATCHED_EVENTS = 50
+MIN_BOOTSTRAP_EVENTS_PER_WEEK = 12
+# A default window varies from 59 to 65 days depending on the weekday. Cap
+# the coverage-scaled bootstrap requirement so a legitimate low-season first
+# publication cannot be blocked merely because the calendar spans ten partial
+# weeks. Ratio, unknown-symbol, exact-range, provider-consistency, and later
+# retained-week overlap checks remain independent fail-closed gates.
+MAX_BOOTSTRAP_MATCHED_EVENTS = 100
+# The provider calendar is broad, but a tiny mapped fraction is
+# indistinguishable from a broken symbol map. Enforce a materially stronger
+# floor and an independent unknown-symbol ceiling.
+MIN_MATCHED_RAW_RATIO = 0.10
+MAX_UNKNOWN_RAW_RATIO = 0.90
+MIN_OVERLAP_MATCH_RATIO = 0.40
+MAX_PUBLIC_READ_SECONDS = 8.0
+MAX_WEEK_DOCUMENT_READS = 16
 
 
 def _is_render():
@@ -587,7 +614,13 @@ class PersistentProviderLimiter:
             self.wait_ms += round(wait_seconds * 1000)
 
     def defer(self, seconds):
-        seconds = max(0.0, float(seconds or 0))
+        try:
+            seconds = float(seconds or 0)
+        except (TypeError, ValueError, OverflowError):
+            seconds = 0.0
+        if not math.isfinite(seconds):
+            seconds = 0.0
+        seconds = min(MAX_PROVIDER_RETRY_AFTER_SECONDS, max(0.0, seconds))
         if not seconds:
             return
         ref = self.db.collection(META_COLLECTION).document(RATE_STATE_DOCUMENT)
@@ -695,10 +728,14 @@ class PersistentProviderLimiter:
 
 
 def _response_retry_after(response, now=None):
-    raw = str(response.headers.get("Retry-After") or "").strip()
+    headers = getattr(response, "headers", {}) or {}
+    raw = str(headers.get("Retry-After") or "").strip()
     try:
-        return max(0.0, float(raw))
-    except ValueError:
+        value = float(raw)
+        if not math.isfinite(value):
+            return 0.0
+        return min(MAX_PROVIDER_RETRY_AFTER_SECONDS, max(0.0, value))
+    except (ValueError, OverflowError):
         try:
             parsed = parsedate_to_datetime(raw)
         except (TypeError, ValueError, OverflowError):
@@ -706,7 +743,10 @@ def _response_retry_after(response, now=None):
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=dt.timezone.utc)
         reference = now or _utc_now()
-        return max(0.0, (parsed.astimezone(dt.timezone.utc) - reference).total_seconds())
+        seconds = (parsed.astimezone(dt.timezone.utc) - reference).total_seconds()
+        if not math.isfinite(seconds):
+            return 0.0
+        return min(MAX_PROVIDER_RETRY_AFTER_SECONDS, max(0.0, seconds))
 
 
 def _provider_reset_datetime(raw, now=None):
@@ -776,6 +816,189 @@ def provider_error_fields(exc):
     return diagnostics
 
 
+def _validate_finnhub_final_host(response):
+    """Reject redirects or proxy responses that leave the Finnhub origin.
+
+    ``requests.Response.url`` is always a string for a real response. Test
+    doubles often omit it (or expose a Mock), so absence is tolerated there;
+    a present URL is always checked. Tokens are sent in a header below, which
+    also keeps request/redirect URLs safe to include in transport diagnostics.
+    """
+    final_url = getattr(response, "url", None)
+    if not isinstance(final_url, str) or not final_url.strip():
+        return
+    parsed = urlsplit(final_url.strip())
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme.lower() != "https" or hostname not in FINNHUB_ALLOWED_HOSTS:
+        raise ProviderValidationError(
+            "Finnhub response resolved to an untrusted host.",
+            reason="provider_final_host_invalid",
+        )
+
+
+def _close_provider_response(response):
+    """Release a streamed provider response without masking its real error."""
+    close = getattr(response, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            # Closing a response is cleanup only. Never replace a bounded
+            # provider/schema error with a transport-specific close failure.
+            pass
+
+
+def _bounded_response_json(response, endpoint):
+    """Decode a provider response without accepting unbounded bytes/shapes."""
+    headers = getattr(response, "headers", {}) or {}
+    raw_length = headers.get("Content-Length") or headers.get("content-length")
+    if raw_length not in (None, ""):
+        try:
+            declared_length = int(str(raw_length).strip())
+        except (TypeError, ValueError, OverflowError):
+            raise ProviderValidationError(
+                f"{endpoint} returned an invalid content length.",
+                reason="provider_response_size_invalid",
+            ) from None
+        if declared_length < 0 or declared_length > MAX_FINNHUB_RESPONSE_BYTES:
+            raise ProviderValidationError(
+                f"{endpoint} response is too large.",
+                reason="provider_response_too_large",
+            )
+
+    # Use streaming for real requests responses. Lightweight test doubles
+    # generally only implement .json(), so retain that compatibility path.
+    iterator = getattr(response, "iter_content", None)
+    iterator_module = getattr(iterator, "__module__", "") if callable(iterator) else ""
+    if callable(iterator) and not iterator_module.startswith("unittest.mock"):
+        try:
+            chunks = []
+            total = 0
+            for chunk in iterator(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8")
+                if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                    raise ProviderValidationError(
+                        f"{endpoint} response contained an invalid body chunk.",
+                        reason="provider_response_body_invalid",
+                    )
+                total += len(chunk)
+                if total > MAX_FINNHUB_RESPONSE_BYTES:
+                    raise ProviderValidationError(
+                        f"{endpoint} response is too large.",
+                        reason="provider_response_too_large",
+                    )
+                chunks.append(bytes(chunk))
+            try:
+                return json.loads(b"".join(chunks).decode("utf-8"))
+            except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+                raise ProviderValidationError(
+                    f"{endpoint} returned invalid JSON.",
+                    reason="provider_invalid_json",
+                ) from None
+        except ProviderValidationError:
+            raise
+        except (requests.RequestException, OSError):
+            raise ProviderError(f"{endpoint} response could not be read.") from None
+        except (TypeError, ValueError):
+            raise ProviderValidationError(
+                f"{endpoint} response body could not be decoded.",
+                reason="provider_invalid_json",
+            ) from None
+
+    # A fake or a non-streaming response may expose bytes directly. Check
+    # their size before decoding; otherwise use the SDK's JSON decoder and
+    # measure the resulting object as a last-resort bound.
+    body = getattr(response, "content", None)
+    if isinstance(body, (bytes, bytearray, memoryview)):
+        body = bytes(body)
+        if len(body) > MAX_FINNHUB_RESPONSE_BYTES:
+            raise ProviderValidationError(
+                f"{endpoint} response is too large.",
+                reason="provider_response_too_large",
+            )
+        try:
+            return json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            raise ProviderValidationError(
+                f"{endpoint} returned invalid JSON.",
+                reason="provider_invalid_json",
+            ) from None
+    try:
+        payload = response.json()
+    except requests.RequestException:
+        raise ProviderError(f"{endpoint} response could not be read.") from None
+    except (TypeError, ValueError, json.JSONDecodeError):
+        raise ProviderValidationError(
+            f"{endpoint} returned invalid JSON.",
+            reason="provider_invalid_json",
+        ) from None
+    try:
+        measured_size = len(json.dumps(
+            payload, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode("utf-8"))
+    except (TypeError, ValueError, OverflowError):
+        raise ProviderValidationError(
+            f"{endpoint} returned an unserializable JSON value.",
+            reason="provider_response_schema_invalid",
+        ) from None
+    if measured_size > MAX_FINNHUB_RESPONSE_BYTES:
+        raise ProviderValidationError(
+            f"{endpoint} response is too large.",
+            reason="provider_response_too_large",
+        )
+    return payload
+
+
+def _validate_provider_object_fields(payload, endpoint):
+    if not isinstance(payload, dict):
+        raise ProviderValidationError(
+            f"{endpoint} response schema is invalid.",
+            reason="provider_response_schema_invalid",
+        )
+    if len(payload) > MAX_FINNHUB_EVENT_FIELDS:
+        raise ProviderValidationError(
+            f"{endpoint} response has too many fields.",
+            reason="provider_response_field_bound_exceeded",
+        )
+    for key, value in payload.items():
+        if len(str(key)) > MAX_FINNHUB_STRING_FIELD_LENGTH:
+            raise ProviderValidationError(
+                f"{endpoint} response has an oversized field name.",
+                reason="provider_response_field_bound_exceeded",
+            )
+        if isinstance(value, str) and len(value) > MAX_FINNHUB_STRING_FIELD_LENGTH:
+            raise ProviderValidationError(
+                f"{endpoint} response has an oversized field.",
+                reason="provider_response_field_bound_exceeded",
+            )
+
+
+def _validate_provider_event_fields(events, endpoint="Finnhub"):
+    if not isinstance(events, list):
+        raise ProviderValidationError(
+            f"{endpoint} earningsCalendar must be an array.",
+            reason="provider_response_schema_invalid",
+        )
+    if len(events) > MAX_FINNHUB_EVENTS_PER_RESPONSE:
+        raise ProviderValidationError(
+            f"{endpoint} returned too many events.",
+            reason="provider_response_field_bound_exceeded",
+        )
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            raise ProviderValidationError(
+                f"{endpoint} event {index} is not an object.",
+                reason="provider_response_schema_invalid",
+            )
+        try:
+            _validate_provider_object_fields(event, f"{endpoint} event {index}")
+        except ProviderValidationError:
+            raise
+
+
 def _fetch_finnhub_calendar_range(
     api_key,
     range_start,
@@ -794,8 +1017,8 @@ def _fetch_finnhub_calendar_range(
         "from": range_start.isoformat(),
         "to": range_end.isoformat(),
         "international": "false",
-        "token": api_key,
     }
+    headers = {"Accept": "application/json", "X-Finnhub-Token": api_key}
     last_error = None
     for attempt in range(2):
         diagnostics["calendarHttpAttempts"] += 1
@@ -814,69 +1037,79 @@ def _fetch_finnhub_calendar_range(
             response = http_get(
                 FINNHUB_CALENDAR_URL,
                 params=params,
+                headers=headers,
                 timeout=(connect_timeout, read_timeout),
+                allow_redirects=False,
+                stream=True,
             )
         except requests.RequestException as exc:
             last_error = exc
             if attempt == 0:
                 time.sleep(_provider_retry_delay(attempt))
                 continue
-            raise ProviderError("Finnhub could not be reached.") from exc
-        if limiter:
-            limiter.observe_response(response.headers)
-        if response.status_code == 429:
-            retry_after = _response_retry_after(response) or None
-            if limiter:
-                limiter.defer(retry_after or 60)
-                diagnostics["rateLimitDeferrals"] += 1
-            raise ProviderRateLimited("calendar_rate_limited", retry_after=retry_after)
-        if response.status_code >= 500 and attempt == 0:
-            time.sleep(_provider_retry_delay(attempt))
-            continue
-        if response.status_code != 200:
-            raise ProviderError(f"Finnhub returned HTTP {response.status_code}.")
-        content_type = str(response.headers.get("Content-Type") or "").lower()
-        if "application/json" not in content_type:
-            raise ProviderValidationError("Finnhub returned an unexpected content type.")
+            # Do not retain a requests exception as __cause__: it can contain
+            # a fully rendered request URL in deployments using query tokens.
+            raise ProviderError("Finnhub could not be reached.") from None
         try:
-            payload = response.json()
-        except (ValueError, json.JSONDecodeError) as exc:
-            raise ProviderValidationError("Finnhub returned invalid JSON.") from exc
-        if not isinstance(payload, dict) or not isinstance(payload.get("earningsCalendar"), list):
-            raise ProviderValidationError("Finnhub returned an unexpected response schema.")
-        events = payload["earningsCalendar"]
-        for index, event in enumerate(events):
-            if not isinstance(event, dict):
-                diagnostics["exactRangeValidationFailures"] += 1
+            _validate_finnhub_final_host(response)
+            if limiter:
+                limiter.observe_response(getattr(response, "headers", {}))
+            if response.status_code == 429:
+                retry_after = _response_retry_after(response) or None
+                if limiter:
+                    limiter.defer(retry_after or 60)
+                    diagnostics["rateLimitDeferrals"] += 1
+                raise ProviderRateLimited("calendar_rate_limited", retry_after=retry_after)
+            if response.status_code >= 500 and attempt == 0:
+                time.sleep(_provider_retry_delay(attempt))
+                continue
+            if response.status_code != 200:
+                raise ProviderError(f"Finnhub returned HTTP {response.status_code}.")
+            response_headers = getattr(response, "headers", {}) or {}
+            content_type = str(response_headers.get("Content-Type") or "").lower()
+            if content_type and "application/json" not in content_type:
+                raise ProviderValidationError("Finnhub returned an unexpected content type.")
+            payload = _bounded_response_json(response, "Finnhub calendar")
+            if not isinstance(payload, dict):
                 raise ProviderValidationError(
-                    f"Finnhub event {index} is not an object.",
-                    reason="calendar_event_outside_requested_range",
+                    "Finnhub returned an unexpected response schema.",
+                    reason="provider_response_schema_invalid",
                 )
-            try:
-                event_date = _parse_date(event.get("date"), f"event[{index}].date")
-            except ValueError as exc:
-                diagnostics["exactRangeValidationFailures"] += 1
+            if "earningsCalendar" not in payload:
                 raise ProviderValidationError(
-                    str(exc), reason="calendar_event_outside_requested_range"
-                ) from exc
-            if event_date < range_start or event_date > range_end:
-                diagnostics["exactRangeValidationFailures"] += 1
-                raise ProviderValidationError(
-                    "Finnhub returned an event outside the requested range.",
-                    reason="calendar_event_outside_requested_range",
+                    "Finnhub returned an unexpected response schema.",
+                    reason="provider_response_schema_invalid",
                 )
-        count = len(events)
-        dense_warning = count >= FINNHUB_CALENDAR_OBSERVED_CAP
-        diagnostics["largestResponseCount"] = max(diagnostics["largestResponseCount"], count)
-        diagnostics["denseResponseCount"] += int(dense_warning)
-        return {
-            "events": events,
-            "rangeStart": range_start,
-            "rangeEnd": range_end,
-            "eventCount": count,
-            "denseWarning": dense_warning,
-        }
-    raise ProviderError("Finnhub refresh failed.") from last_error
+            events = payload["earningsCalendar"]
+            _validate_provider_event_fields(events)
+            for index, event in enumerate(events):
+                try:
+                    event_date = _parse_date(event.get("date"), f"event[{index}].date")
+                except ValueError as exc:
+                    diagnostics["exactRangeValidationFailures"] += 1
+                    raise ProviderValidationError(
+                        str(exc), reason="calendar_event_outside_requested_range"
+                    ) from exc
+                if event_date < range_start or event_date > range_end:
+                    diagnostics["exactRangeValidationFailures"] += 1
+                    raise ProviderValidationError(
+                        "Finnhub returned an event outside the requested range.",
+                        reason="calendar_event_outside_requested_range",
+                    )
+            count = len(events)
+            dense_warning = count >= FINNHUB_CALENDAR_OBSERVED_CAP
+            diagnostics["largestResponseCount"] = max(diagnostics["largestResponseCount"], count)
+            diagnostics["denseResponseCount"] += int(dense_warning)
+            return {
+                "events": events,
+                "rangeStart": range_start,
+                "rangeEnd": range_end,
+                "eventCount": count,
+                "denseWarning": dense_warning,
+            }
+        finally:
+            _close_provider_response(response)
+    raise ProviderError("Finnhub refresh failed.") from None
 
 
 def _raw_calendar_identity(event):
@@ -1025,25 +1258,38 @@ def fetch_finnhub_profile(
     try:
         response = http_get(
             PROFILE_URL,
-            params={"symbol": issuer["primaryProviderSymbol"], "token": api_key},
+            params={"symbol": issuer["primaryProviderSymbol"]},
+            headers={"Accept": "application/json", "X-Finnhub-Token": api_key},
             timeout=timeout,
+            allow_redirects=False,
+            stream=True,
         )
     except requests.RequestException as exc:
-        raise ProviderError("profile_network_error") from exc
-    limiter.observe_response(response.headers)
-    if response.status_code == 429:
-        retry_after = _response_retry_after(response) or None
-        limiter.defer(retry_after or default_retry_after)
-        raise ProviderRateLimited("profile_rate_limited", retry_after=retry_after)
-    if response.status_code >= 500:
-        raise ProviderError("profile_server_error")
-    if response.status_code != 200:
-        raise ProviderError(f"profile_http_{response.status_code}")
+        raise ProviderError("profile_network_error") from None
     try:
-        payload = response.json()
-    except (ValueError, json.JSONDecodeError) as exc:
-        raise ProviderValidationError("profile_invalid_json") from exc
-    return payload
+        _validate_finnhub_final_host(response)
+        limiter.observe_response(getattr(response, "headers", {}))
+        if response.status_code == 429:
+            retry_after = _response_retry_after(response) or None
+            limiter.defer(retry_after or default_retry_after)
+            raise ProviderRateLimited("profile_rate_limited", retry_after=retry_after)
+        if response.status_code >= 500:
+            raise ProviderError("profile_server_error")
+        if response.status_code != 200:
+            raise ProviderError(f"profile_http_{response.status_code}")
+        response_headers = getattr(response, "headers", {}) or {}
+        content_type = str(response_headers.get("Content-Type") or "").lower()
+        if content_type and "application/json" not in content_type:
+            raise ProviderValidationError("profile_invalid_content_type")
+        payload = _bounded_response_json(response, "Finnhub profile")
+        if not isinstance(payload, dict):
+            raise ProviderValidationError(
+                "profile_invalid_schema", reason="provider_response_schema_invalid"
+            )
+        _validate_provider_object_fields(payload, "Finnhub profile")
+        return payload
+    finally:
+        _close_provider_response(response)
 
 
 def normalize_provider_payload(payload, constituents, coverage_start, coverage_end):
@@ -1140,6 +1386,29 @@ def normalize_provider_payload(payload, constituents, coverage_start, coverage_e
     }
 
 
+def _week_storage_matches(document, estimate_document, week_key, revision, event_ids):
+    """Return whether both changed-only publication targets are self-healed."""
+    if not isinstance(document, dict) or not isinstance(estimate_document, dict):
+        return False
+    if (
+        document.get("weekStart") != week_key
+        or document.get("weekRevision") != revision
+        or not isinstance(document.get("events"), list)
+        or estimate_document.get("weekStart") != week_key
+        or estimate_document.get("weekRevision") != revision
+        or not isinstance(estimate_document.get("estimates"), dict)
+    ):
+        return False
+    summary_ids = {
+        item.get("eventId")
+        for item in document["events"]
+        if isinstance(item, dict) and isinstance(item.get("eventId"), str)
+    }
+    if summary_ids != set(event_ids):
+        return False
+    return set(estimate_document["estimates"]) == set(event_ids)
+
+
 def build_week_documents(
     events,
     coverage_start,
@@ -1149,11 +1418,13 @@ def build_week_documents(
     market_cap_snapshot=None,
     market_today=None,
     previous_documents=None,
+    previous_estimate_documents=None,
 ):
     now = now or _utc_now()
     market_today = market_today or now.astimezone(ZoneInfo("America/New_York")).date()
     changed_at = _iso_utc(now)
     previous_weeks = (previous_manifest or {}).get("weeks") or {}
+    previous_estimate_documents = previous_estimate_documents or {}
     events_by_week = {week.isoformat(): [] for week in _iter_week_starts(coverage_start, coverage_end)}
     prepared_events = []
     for source_event in events:
@@ -1206,6 +1477,13 @@ def build_week_documents(
             schema_changed
             or not isinstance(previous, dict)
             or previous.get("revision") != revision
+            or not _week_storage_matches(
+                (previous_documents or {}).get(week_key),
+                previous_estimate_documents.get(week_key),
+                week_key,
+                revision,
+                estimate_events,
+            )
         )
         week_changed_at = changed_at if is_changed else previous.get("changedAt")
         if not week_changed_at:
@@ -1368,6 +1646,11 @@ def _run_bounded_transaction(db, operation, deadline, phase, max_attempts=5):
     return result
 
 
+def _public_read_deadline():
+    """Return a bounded deadline for one public Firestore request."""
+    return time.monotonic() + MAX_PUBLIC_READ_SECONDS
+
+
 def _get_manifest(db, deadline=None):
     ref = db.collection(META_COLLECTION).document(META_DOCUMENT)
     return _document_dict(_bounded_get(ref, deadline, "manifest read"))
@@ -1430,21 +1713,215 @@ def _release_lease(db, owner, deadline=None):
         _log("earnings_calendar_lease_release_failed", error=type(exc).__name__)
 
 
-def _validate_candidate_size(events, provider_counts, previous_manifest):
-    previous_weeks = (previous_manifest or {}).get("weeks") or {}
-    previous_count = sum(
-        max(0, int(item.get("eventCount") or 0))
-        for item in previous_weeks.values()
-        if isinstance(item, dict)
+def _candidate_event_identity(event):
+    issuer_or_symbol = event.get("issuerId") or event.get("symbol")
+    report_date = event.get("reportDate")
+    if issuer_or_symbol and report_date:
+        # Summary documents do not retain fiscal fields; issuer/date is the
+        # stable overlap identity shared by summaries and provider events.
+        return ("issuer-date", issuer_or_symbol, report_date)
+    event_id = event.get("eventId")
+    if event_id:
+        return ("event", event_id)
+    return None
+
+
+def _bootstrap_matched_event_floor(coverage_start=None, coverage_end=None):
+    """Return the minimum candidate size when no retained baseline exists.
+
+    A fixed 25-event floor is too easy for a broken provider-symbol map to
+    satisfy. Scale the bootstrap requirement with the requested calendar
+    window while keeping a conservative absolute minimum for short/manual
+    windows. The scaled value is capped because the default four-week
+    lookback plus 30-day future window can span ten partial weeks; seasonality
+    should not make the first healthy publication impossible. Other provider
+    and mapping gates still apply independently.
+    """
+    if isinstance(coverage_start, dt.datetime):
+        coverage_start = coverage_start.date()
+    if isinstance(coverage_end, dt.datetime):
+        coverage_end = coverage_end.date()
+    if not isinstance(coverage_start, dt.date) or not isinstance(coverage_end, dt.date):
+        coverage_days = 30
+    else:
+        coverage_days = max(1, (coverage_end - coverage_start).days + 1)
+    coverage_weeks = max(1, math.ceil(coverage_days / 7))
+    return min(
+        MAX_BOOTSTRAP_MATCHED_EVENTS,
+        max(
+            MIN_BOOTSTRAP_MATCHED_EVENTS,
+            math.ceil(coverage_weeks * MIN_BOOTSTRAP_EVENTS_PER_WEEK),
+        ),
     )
-    raw_count = max(0, int((provider_counts or {}).get("rawEventCount") or 0))
-    matched_count = len(events)
-    if matched_count < MIN_INITIAL_MATCHED_EVENTS:
-        raise ProviderValidationError("Finnhub returned an implausibly small matched calendar.")
-    if raw_count <= 0 or matched_count / raw_count < MIN_MATCHED_RAW_RATIO:
-        raise ProviderValidationError("Finnhub returned an implausibly low S&P 500 match ratio.")
-    if previous_count >= 20 and len(events) < previous_count * 0.4:
-        raise ProviderValidationError("Finnhub matched-event count dropped implausibly.")
+
+
+def _validate_candidate_size(
+    events,
+    provider_counts,
+    previous_manifest,
+    coverage_start=None,
+    coverage_end=None,
+    previous_documents=None,
+):
+    """Fail closed on sparse/mis-mapped provider candidates.
+
+    The old aggregate comparison included weeks that were intentionally
+    falling out of the rolling window and did not inspect unknown symbols.
+    This validator compares only retained overlap, checks each retained week,
+    and optionally compares event identities from the stored documents. A
+    validation error is the quarantine boundary: refresh callers must not
+    publish the candidate or advance the manifest.
+    """
+    provider_counts = provider_counts if isinstance(provider_counts, dict) else {}
+    previous_manifest = previous_manifest if isinstance(previous_manifest, dict) else {}
+    previous_weeks = previous_manifest.get("weeks")
+    if not isinstance(previous_weeks, dict):
+        previous_weeks = {}
+
+    raw_value = provider_counts.get("rawEventCount")
+    matched_value = provider_counts.get("matchedEventCount")
+    unknown_value = provider_counts.get("unknownSymbolCount")
+    try:
+        raw_count = int(raw_value)
+        declared_matched_count = int(matched_value)
+        unknown_count = int(unknown_value)
+    except (TypeError, ValueError, OverflowError):
+        raise ProviderValidationError(
+            "Finnhub provider counts are malformed.",
+            reason="calendar_candidate_counts_invalid",
+        ) from None
+    matched_count = len(events) if isinstance(events, list) else -1
+    if (
+        raw_count <= 0
+        or declared_matched_count != matched_count
+        or matched_count < MIN_INITIAL_MATCHED_EVENTS
+        or unknown_count < 0
+        or matched_count < 0
+        or matched_count + unknown_count > raw_count
+    ):
+        raise ProviderValidationError(
+            "Finnhub returned an implausibly small or malformed matched calendar.",
+            reason="calendar_candidate_counts_invalid",
+        )
+    matched_ratio = matched_count / raw_count
+    unknown_ratio = unknown_count / raw_count
+    if matched_ratio < MIN_MATCHED_RAW_RATIO or unknown_ratio > MAX_UNKNOWN_RAW_RATIO:
+        raise ProviderValidationError(
+            "Finnhub returned an implausibly low S&P 500 match ratio.",
+            reason="calendar_candidate_symbol_mapping_sparse",
+        )
+
+    candidate_by_week = defaultdict(list)
+    for event in events:
+        if not isinstance(event, dict):
+            raise ProviderValidationError(
+                "Finnhub candidate contains a malformed normalized event.",
+                reason="calendar_candidate_event_invalid",
+            )
+        try:
+            report_date = _parse_date(event.get("reportDate"), "candidate.reportDate")
+        except ValueError as exc:
+            raise ProviderValidationError(
+                "Finnhub candidate contains an invalid report date.",
+                reason="calendar_candidate_event_invalid",
+            ) from exc
+        candidate_by_week[_week_start(report_date).isoformat()].append(event)
+
+    if coverage_start is None:
+        try:
+            coverage_start = _parse_date(previous_manifest.get("coverageStart"), "coverageStart")
+        except ValueError:
+            coverage_start = None
+    if coverage_end is None:
+        try:
+            coverage_end = _parse_date(previous_manifest.get("coverageEnd"), "coverageEnd")
+        except ValueError:
+            coverage_end = None
+    if coverage_start is not None and coverage_end is not None and coverage_end >= coverage_start:
+        retained_week_keys = {
+            week.isoformat() for week in _iter_week_starts(coverage_start, coverage_end)
+        }.intersection(previous_weeks)
+    else:
+        # Backward-compatible direct callers do not always carry coverage
+        # metadata. In that case the manifest's week keys are the only safe
+        # retained-overlap set.
+        retained_week_keys = set(previous_weeks)
+
+    if not retained_week_keys:
+        bootstrap_floor = _bootstrap_matched_event_floor(
+            coverage_start, coverage_end
+        )
+        if matched_count < bootstrap_floor:
+            raise ProviderValidationError(
+                "Finnhub returned a sparse first calendar candidate; it was quarantined.",
+                reason="calendar_candidate_bootstrap_sparse",
+            )
+
+    previous_documents = previous_documents if isinstance(previous_documents, dict) else {}
+    for week_key in sorted(retained_week_keys):
+        entry = previous_weeks.get(week_key)
+        if not isinstance(entry, dict):
+            raise ProviderValidationError(
+                f"Published week {week_key} has malformed validation metadata.",
+                reason="calendar_candidate_overlap_invalid",
+            )
+        try:
+            previous_count = int(entry.get("eventCount") or 0)
+        except (TypeError, ValueError, OverflowError):
+            raise ProviderValidationError(
+                f"Published week {week_key} has malformed eventCount.",
+                reason="calendar_candidate_overlap_invalid",
+            ) from None
+        if previous_count < 0:
+            raise ProviderValidationError(
+                f"Published week {week_key} has a negative eventCount.",
+                reason="calendar_candidate_overlap_invalid",
+            )
+        candidate_events = candidate_by_week.get(week_key, [])
+        minimum_count = (
+            max(1, math.ceil(previous_count * MIN_OVERLAP_MATCH_RATIO))
+            if previous_count > 0
+            else 0
+        )
+        if len(candidate_events) < minimum_count:
+            raise ProviderValidationError(
+                f"Finnhub candidate is sparse in retained week {week_key}.",
+                reason="calendar_candidate_week_sparse",
+            )
+
+        prior_document = previous_documents.get(week_key)
+        prior_events = prior_document.get("events") if isinstance(prior_document, dict) else None
+        if isinstance(prior_events, list) and prior_events and previous_count:
+            prior_ids = {
+                identity
+                for item in prior_events
+                if isinstance(item, dict)
+                and (item.get("eventId") or item.get("issuerId") or item.get("symbol"))
+                for identity in [_candidate_event_identity(item)]
+                if identity is not None
+            }
+            candidate_ids = {
+                identity
+                for item in candidate_events
+                for identity in [_candidate_event_identity(item)]
+                if identity is not None
+            }
+            if prior_ids:
+                overlap = len(prior_ids.intersection(candidate_ids)) / len(prior_ids)
+                if overlap < MIN_OVERLAP_MATCH_RATIO:
+                    raise ProviderValidationError(
+                        f"Finnhub candidate has implausible event overlap in {week_key}.",
+                        reason="calendar_candidate_event_overlap_sparse",
+                    )
+
+    return {
+        "rawEventCount": raw_count,
+        "matchedEventCount": matched_count,
+        "unknownSymbolCount": unknown_count,
+        "matchedRatio": matched_ratio,
+        "unknownRatio": unknown_ratio,
+        "retainedWeeksChecked": len(retained_week_keys),
+    }
 
 
 def _get_market_cap_snapshot(db, deadline=None):
@@ -1453,7 +1930,10 @@ def _get_market_cap_snapshot(db, deadline=None):
 
 
 def _get_documents(db, collection_name, document_keys, deadline=None):
-    refs = [db.collection(collection_name).document(key) for key in sorted(set(document_keys))]
+    keys = sorted(set(document_keys))
+    if len(keys) > MAX_WEEK_DOCUMENT_READS:
+        raise CalendarUnavailable("The earnings-calendar document request is too large.")
+    refs = [db.collection(collection_name).document(key) for key in keys]
     if not refs:
         return {}
     timeout = _rpc_timeout(deadline, f"{collection_name} batch read") if deadline is not None else None
@@ -1507,9 +1987,11 @@ def _validate_historical_documents(
     estimate_documents,
     retained_week_keys,
     market_today,
+    allow_repair=False,
 ):
     """Fail closed when frozen order cannot be proven from published documents."""
     manifest_weeks = (previous_manifest or {}).get("weeks") or {}
+    repair_keys = []
     for week_key in sorted(set(retained_week_keys)):
         try:
             week_start = dt.date.fromisoformat(week_key)
@@ -1532,6 +2014,9 @@ def _validate_historical_documents(
             or not isinstance(document.get("events"), list)
             or not isinstance(estimates.get("estimates"), dict)
         ):
+            if allow_repair:
+                repair_keys.append(week_key)
+                continue
             raise HistoricalSnapshotInvalid(
                 f"Published historical week {week_key} is missing or revision-inconsistent."
             )
@@ -1539,6 +2024,9 @@ def _validate_historical_documents(
         seen_orders = set()
         for event in document["events"]:
             if not isinstance(event, dict):
+                if allow_repair:
+                    repair_keys.append(week_key)
+                    break
                 raise HistoricalSnapshotInvalid(f"Published historical week {week_key} is malformed.")
             order = event.get("displayOrder")
             identity = (event.get("reportDate"), frontend_lane(event.get("session")), order)
@@ -1549,10 +2037,14 @@ def _validate_historical_documents(
                 or order < 1
                 or identity in seen_orders
             ):
+                if allow_repair:
+                    repair_keys.append(week_key)
+                    break
                 raise HistoricalSnapshotInvalid(
                     f"Published historical week {week_key} has invalid frozen ordering."
                 )
             seen_orders.add(identity)
+    return sorted(set(repair_keys))
 
 
 def checkpoint_market_cap_snapshot(
@@ -1738,6 +2230,7 @@ def refresh_earnings_calendar(
             previous_estimate_documents,
             retained_week_keys,
             market_today,
+            allow_repair=True,
         )
         _require_execution_time(execution_deadline, "provider work", publication_reserve)
         previous_snapshot = _get_market_cap_snapshot(db, execution_deadline)
@@ -1766,7 +2259,14 @@ def refresh_earnings_calendar(
             coverage_start,
             coverage_end,
         )
-        _validate_candidate_size(events, provider_counts, previous_manifest)
+        _validate_candidate_size(
+            events,
+            provider_counts,
+            previous_manifest,
+            coverage_start=coverage_start,
+            coverage_end=coverage_end,
+            previous_documents=previous_documents,
+        )
 
         prior_symbols = _symbols_from_retained_weeks(
             previous_documents, retained_week_keys
@@ -1888,9 +2388,11 @@ def refresh_earnings_calendar(
             market_cap_snapshot=candidate_snapshot,
             market_today=market_today,
             previous_documents=previous_documents,
+            previous_estimate_documents=previous_estimate_documents,
         )
         previous_revision = previous_manifest.get("datasetRevision")
         dataset_changed = previous_revision != built["datasetRevision"]
+        storage_repaired = bool(built["changedKeys"])
         manifest_changed_at = _iso_utc(now) if dataset_changed else _iso_utc(previous_manifest.get("changedAt"))
         if not manifest_changed_at:
             manifest_changed_at = _iso_utc(now)
@@ -1936,7 +2438,7 @@ def refresh_earnings_calendar(
         unchanged_count = len(built["documents"]) - len(built["changedKeys"])
         _log(
             "earnings_calendar_refresh",
-            status="updated" if dataset_changed else "unchanged",
+            status="updated" if dataset_changed or storage_repaired else "unchanged",
             changedWeeks=len(built["changedKeys"]),
             unchangedWeeks=unchanged_count,
             expiredWeeks=len(expired_keys),
@@ -1962,7 +2464,7 @@ def refresh_earnings_calendar(
             **provider_counts,
         )
         return {
-            "status": "updated" if dataset_changed else "unchanged",
+            "status": "updated" if dataset_changed or storage_repaired else "unchanged",
             "providerChecked": True,
             "checkedAt": manifest["checkedAt"],
             "changedWeeks": len(built["changedKeys"]),
@@ -2041,7 +2543,7 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
         if db is None:
             return _unavailable_response()
         try:
-            manifest = _get_manifest(db)
+            manifest = _get_manifest(db, _public_read_deadline())
         except Exception as exc:
             _log("earnings_calendar_read_failed", route="manifest", error=type(exc).__name__)
             return _unavailable_response("The earnings calendar cache could not be read.")
@@ -2061,7 +2563,7 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
         if db is None:
             return _unavailable_response()
         try:
-            manifest = _get_manifest(db)
+            manifest = _get_manifest(db, _public_read_deadline())
         except Exception as exc:
             _log("earnings_calendar_read_failed", route="health", error=type(exc).__name__)
             return _unavailable_response("The earnings calendar heartbeat could not be read.")
@@ -2104,7 +2606,8 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
         if db is None:
             return _unavailable_response()
         try:
-            manifest = _get_manifest(db)
+            read_deadline = _public_read_deadline()
+            manifest = _get_manifest(db, read_deadline)
             if not manifest:
                 return _unavailable_response()
             expected_dataset_revision = request.args.get("revision", "").strip()
@@ -2131,7 +2634,11 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
                 }), 400
             week_keys = [(start + dt.timedelta(weeks=index)).isoformat() for index in range(count)]
             refs = [db.collection(WEEK_COLLECTION).document(key) for key in week_keys]
-            snapshots = list(db.get_all(refs))
+            timeout = _rpc_timeout(read_deadline, "public week batch read")
+            try:
+                snapshots = list(db.get_all(refs, timeout=timeout))
+            except TypeError:
+                snapshots = list(db.get_all(refs))
             by_id = {snapshot.id: snapshot for snapshot in snapshots if getattr(snapshot, "exists", False)}
             advertised = manifest.get("weeks") if isinstance(manifest.get("weeks"), dict) else {}
             weeks = []
@@ -2159,15 +2666,13 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
             _log("earnings_calendar_read_failed", route="weeks", error=type(exc).__name__)
             return _unavailable_response("The earnings calendar cache could not be read.")
 
-        if count == 1:
-            etag = weeks[0]["weekRevision"]
-        else:
-            etag = _hash_payload([
-                [week["weekStart"], week["weekRevision"]]
-                for week in weeks
-            ])
+        # The revision identifies dataset content, while the response also
+        # carries weekEnd/changedAt. Hash the complete public payload so a
+        # metadata-only correction cannot incorrectly return 304.
+        public_payload = {"weeks": weeks}
+        etag = _hash_payload(public_payload)
         return _etag_response(
-            {"weeks": weeks},
+            public_payload,
             etag,
             "public, max-age=0, must-revalidate",
         )
@@ -2196,7 +2701,8 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
         if db is None:
             return _unavailable_response()
         try:
-            manifest = _get_manifest(db)
+            read_deadline = _public_read_deadline()
+            manifest = _get_manifest(db, read_deadline)
             if not manifest:
                 return _unavailable_response()
             advertised = manifest.get("weeks") if isinstance(manifest.get("weeks"), dict) else {}
@@ -2218,7 +2724,11 @@ def register_earnings_calendar_routes(app, limiter, db_getter):
                 return response
 
             document = _document_dict(
-                db.collection(ESTIMATE_WEEK_COLLECTION).document(week_start).get()
+                _bounded_get(
+                    db.collection(ESTIMATE_WEEK_COLLECTION).document(week_start),
+                    read_deadline,
+                    "estimate read",
+                )
             )
             if not document or document.get("weekRevision") != current_revision:
                 return _unavailable_response("Estimate details are temporarily unavailable.")

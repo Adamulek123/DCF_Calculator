@@ -1,4 +1,5 @@
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import pathlib
 import sys
@@ -386,6 +387,112 @@ class BackendTestCase(unittest.TestCase):
             )
         self.assertEqual(excess.status_code, 400)
 
+    def test_watchlist_create_idempotency_replays_and_is_reconcilable(self):
+        request_payload = {
+            "name": "Response loss",
+            "tickers": ["AAPL"],
+            "idempotencyKey": "watch-op-1234",
+        }
+        first = self.client.post(
+            "/watchlists", headers=self.headers, json=request_payload
+        )
+        self.assertEqual(first.status_code, 201)
+        created = first.get_json()
+        self.assertEqual(created["createOperationId"], "watch-op-1234")
+
+        replay = self.client.post(
+            "/watchlists", headers=self.headers, json=request_payload
+        )
+        self.assertEqual(replay.status_code, 200)
+        self.assertTrue(replay.get_json()["idempotentReplay"])
+        self.assertEqual(replay.get_json()["id"], created["id"])
+
+        listed = self.client.get("/watchlists", headers=self.headers).get_json()
+        self.assertEqual(len(listed["watchlists"]), 1)
+        self.assertEqual(
+            listed["watchlists"][0]["createOperationId"], "watch-op-1234"
+        )
+
+        conflicting_retry = self.client.post(
+            "/watchlists",
+            headers=self.headers,
+            json={**request_payload, "name": "Different request"},
+        )
+        self.assertEqual(conflicting_retry.status_code, 409)
+        self.assertEqual(
+            conflicting_retry.get_json()["code"], "IDEMPOTENCY_CONFLICT"
+        )
+
+    def test_concurrent_watchlist_creates_serialize_name_and_count_invariants(self):
+        def create(name):
+            client = backend.app.test_client()
+            return client.post(
+                "/watchlists",
+                headers=self.headers,
+                json={"name": name, "tickers": ["AAPL"]},
+            ).status_code
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            statuses = list(executor.map(create, [" Core ", "core"]))
+        self.assertCountEqual(statuses, [201, 409])
+        watchlist_paths = [
+            path for path in self.database.documents
+            if path[:3] == ("users", "user-a", "watchlists")
+        ]
+        self.assertEqual(len(watchlist_paths), 1)
+
+    def test_saved_calculation_quota_retains_only_newest_documents(self):
+        with mock.patch.object(backend, "MAX_SAVED_CALCULATIONS", 2):
+            for suffix in ("one", "two", "three"):
+                payload = self.calculation_payload()
+                payload["name"] = f"AAPL-{suffix}"
+                payload["data"]["id"] = payload["name"]
+                response = self.client.post(
+                    "/save_calculation", headers=self.headers, json=payload
+                )
+                self.assertEqual(response.status_code, 200)
+
+        calculation_paths = [
+            path for path in self.database.documents
+            if path[:3] == ("users", "user-a", "calculations")
+        ]
+        self.assertEqual(len(calculation_paths), 2)
+        self.assertNotIn(
+            ("users", "user-a", "calculations", "AAPL-one"),
+            calculation_paths,
+        )
+
+    def test_portfolio_bootstrap_repairs_settings_monotonically(self):
+        self.seed_portfolio("p1", "One", 0)
+        self.seed_portfolio("p2", "Two", 0)
+        self.seed_portfolio_settings("missing", 4)
+
+        bootstrapped = self.client.get("/portfolio/bootstrap", headers=self.headers)
+        self.assertEqual(bootstrapped.status_code, 200)
+        first_payload = bootstrapped.get_json()
+        self.assertEqual(first_payload["activePortfolioId"], "p1")
+        self.assertEqual(first_payload["activationRevision"], 5)
+
+        activated = self.client.post(
+            "/portfolios/p2/activate",
+            headers=self.headers,
+            json={"baseActivationRevision": 5},
+        )
+        self.assertEqual(activated.status_code, 200)
+        self.assertEqual(activated.get_json()["activationRevision"], 6)
+
+        repaired_again = self.client.get(
+            "/portfolio/bootstrap", headers=self.headers
+        )
+        self.assertEqual(repaired_again.status_code, 200)
+        self.assertEqual(repaired_again.get_json()["activePortfolioId"], "p2")
+        self.assertEqual(repaired_again.get_json()["activationRevision"], 6)
+
+    def test_limiter_key_uses_verified_uid_when_auth_has_run(self):
+        with backend.app.test_request_context("/watchlists"):
+            backend.g.firebase_uid = "user-a"
+            self.assertTrue(backend._rate_limit_key().startswith("uid:"))
+
     @staticmethod
     def calculation_payload():
         calculation_id = "AAPL-1700000000000"
@@ -558,6 +665,77 @@ class BackendTestCase(unittest.TestCase):
         self.assertEqual(portfolio_paths, [
             ("users", "user-a", "portfolio", "portfolio-b")
         ])
+
+    def test_portfolio_create_idempotency_binds_normalized_name_and_id(self):
+        first_payload = {
+            "portfolioId": "fingerprint-portfolio",
+            "idempotencyKey": "create-fingerprint-1",
+            "name": "  Core   portfolio ",
+        }
+        first = self.client.post(
+            "/portfolios", headers=self.headers, json=first_payload
+        )
+        self.assertEqual(first.status_code, 201)
+
+        normalized_replay = self.client.post(
+            "/portfolios",
+            headers=self.headers,
+            json={**first_payload, "name": "Core portfolio"},
+        )
+        self.assertEqual(normalized_replay.status_code, 200)
+        self.assertTrue(normalized_replay.get_json()["idempotentReplay"])
+
+        mismatched_name = self.client.post(
+            "/portfolios",
+            headers=self.headers,
+            json={**first_payload, "name": "Different portfolio"},
+        )
+        self.assertEqual(mismatched_name.status_code, 409)
+        self.assertEqual(
+            mismatched_name.get_json()["code"], "IDEMPOTENCY_CONFLICT"
+        )
+
+        mismatched_id = self.client.post(
+            "/portfolios",
+            headers=self.headers,
+            json={**first_payload, "portfolioId": "another-portfolio"},
+        )
+        self.assertEqual(mismatched_id.status_code, 409)
+        self.assertEqual(
+            mismatched_id.get_json()["code"], "IDEMPOTENCY_CONFLICT"
+        )
+
+    def test_portfolio_create_legacy_idempotency_record_is_reconciled_safely(self):
+        self.seed_portfolio("legacy-portfolio", "Legacy Core", 0)
+        path = ("users", "user-a", "portfolio", "legacy-portfolio")
+        self.database.documents[path]["createOperationId"] = "legacy-create-1"
+
+        replay = self.client.post(
+            "/portfolios",
+            headers=self.headers,
+            json={
+                "portfolioId": "legacy-portfolio",
+                "idempotencyKey": "legacy-create-1",
+                "name": " Legacy   Core ",
+            },
+        )
+        self.assertEqual(replay.status_code, 200)
+        self.assertTrue(replay.get_json()["idempotentReplay"])
+        self.assertTrue(
+            self.database.documents[path].get("createRequestFingerprint")
+        )
+
+        conflict = self.client.post(
+            "/portfolios",
+            headers=self.headers,
+            json={
+                "portfolioId": "legacy-portfolio",
+                "idempotencyKey": "legacy-create-1",
+                "name": "Not Legacy Core",
+            },
+        )
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.get_json()["code"], "IDEMPOTENCY_CONFLICT")
 
     def test_portfolio_create_requires_idempotency_and_enforces_limit(self):
         missing_contract = self.client.post(
@@ -749,6 +927,272 @@ class BackendTestCase(unittest.TestCase):
         self.assertEqual(delayed.get_json()["activePortfolioId"], "p2")
         self.assertEqual(delayed.get_json()["activationRevision"], 5)
 
+    def test_portfolio_save_requires_full_replacement_preconditions(self):
+        self.seed_portfolio("p1", "One", 0)
+
+        missing_revision = self.client.post(
+            "/portfolio/save",
+            headers=self.headers,
+            json={"portfolioId": "p1", "positions": []},
+        )
+        self.assertEqual(missing_revision.status_code, 400)
+        self.assertIn("baseRevision is required", missing_revision.get_json()["message"])
+
+        missing_positions = self.client.post(
+            "/portfolio/save",
+            headers=self.headers,
+            json={"portfolioId": "p1", "baseRevision": 0},
+        )
+        self.assertEqual(missing_positions.status_code, 400)
+        self.assertIn("positions is required", missing_positions.get_json()["message"])
+
+        boolean_revision = self.client.post(
+            "/portfolio/save",
+            headers=self.headers,
+            json={"portfolioId": "p1", "positions": [], "baseRevision": True},
+        )
+        self.assertEqual(boolean_revision.status_code, 400)
+
+    def test_portfolio_save_returns_transaction_revision_atomically(self):
+        self.seed_portfolio("p1", "One", 0)
+
+        saved = self.client.post(
+            "/portfolio/save",
+            headers=self.headers,
+            json={
+                "portfolioId": "p1",
+                "positions": [],
+                "baseCurrency": "USD",
+                "baseRevision": 0,
+            },
+        )
+        self.assertEqual(saved.status_code, 200)
+        payload = saved.get_json()
+        self.assertEqual(payload["revision"], 1)
+        self.assertEqual(payload["portfolio"]["revision"], 1)
+        self.assertEqual(payload["count"], len(payload["portfolio"]["positions"]))
+
+        stale = self.client.post(
+            "/portfolio/save",
+            headers=self.headers,
+            json={
+                "portfolioId": "p1",
+                "positions": [],
+                "baseCurrency": "USD",
+                "baseRevision": 0,
+            },
+        )
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(stale.get_json()["code"], "REVISION_CONFLICT")
+        self.assertEqual(stale.get_json()["portfolio"]["revision"], 1)
+
+    def test_portfolio_save_idempotency_binds_positions_currency_and_revision(self):
+        self.seed_portfolio("p1", "One", 0)
+        position = {
+            "ticker": "AAPL",
+            "side": "buy",
+            "sizingMode": "shares",
+            "sizeValue": 2,
+            "entryPriceUsd": 100,
+            "leverage": 1,
+            "currency": "USD",
+            "id": "position-1",
+            "createdAt": "2026-08-10T10:00:00.000Z",
+        }
+        payload = {
+            "portfolioId": "p1",
+            "positions": [position],
+            "baseCurrency": "USD",
+            "baseRevision": 0,
+            "idempotencyKey": "save-fingerprint-1",
+        }
+        first = self.client.post(
+            "/portfolio/save", headers=self.headers, json=payload
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.get_json()["revision"], 1)
+
+        replay = self.client.post(
+            "/portfolio/save", headers=self.headers, json=payload
+        )
+        self.assertEqual(replay.status_code, 200)
+        self.assertTrue(replay.get_json()["idempotentReplay"])
+        self.assertEqual(replay.get_json()["revision"], 1)
+
+        for mismatched in (
+            {**payload, "positions": []},
+            {**payload, "baseCurrency": "EUR"},
+            {**payload, "baseRevision": 1},
+            {
+                **payload,
+                "positions": [{**position, "id": "position-2"}],
+            },
+            {
+                **payload,
+                "positions": [{
+                    **position,
+                    "createdAt": "2026-08-10T10:00:01.000Z",
+                }],
+            },
+        ):
+            conflict = self.client.post(
+                "/portfolio/save", headers=self.headers, json=mismatched
+            )
+            self.assertEqual(conflict.status_code, 409)
+            self.assertEqual(conflict.get_json()["code"], "IDEMPOTENCY_CONFLICT")
+
+    def test_portfolio_save_legacy_idempotency_record_is_reconciled_safely(self):
+        position = {
+            "ticker": "AAPL",
+            "side": "buy",
+            "sizingMode": "shares",
+            "sizeValue": 2.0,
+            "entryPriceUsd": 100.0,
+            "leverage": 1.0,
+            "currency": "USD",
+            "id": "legacy-position-1",
+            "createdAt": "2026-08-10T10:00:00.000Z",
+        }
+        self.seed_portfolio("p1", "One", 1, positions=[position])
+        path = ("users", "user-a", "portfolio", "p1")
+        self.database.documents[path]["lastMutationId"] = "legacy-save-1"
+        payload = {
+            "portfolioId": "p1",
+            "positions": [position],
+            "baseCurrency": "USD",
+            "baseRevision": 0,
+            "idempotencyKey": "legacy-save-1",
+        }
+
+        replay = self.client.post(
+            "/portfolio/save",
+            headers=self.headers,
+            json=payload,
+        )
+        self.assertEqual(replay.status_code, 200)
+        self.assertTrue(replay.get_json()["idempotentReplay"])
+        self.assertEqual(
+            replay.get_json()["portfolio"]["positions"][0]["id"],
+            position["id"],
+        )
+        self.assertTrue(
+            self.database.documents[path].get("lastMutationFingerprint")
+        )
+
+        for mismatched_position in (
+            {**position, "id": "legacy-position-2"},
+            {
+                **position,
+                "createdAt": "2026-08-10T10:00:01.000Z",
+            },
+        ):
+            conflict = self.client.post(
+                "/portfolio/save",
+                headers=self.headers,
+                json={**payload, "positions": [mismatched_position]},
+            )
+            self.assertEqual(conflict.status_code, 409)
+            self.assertEqual(
+                conflict.get_json()["code"],
+                "IDEMPOTENCY_CONFLICT",
+            )
+
+    def test_portfolio_position_metadata_requires_bounded_strings(self):
+        self.seed_portfolio("p1", "One", 0)
+        position = {
+            "ticker": "AAPL",
+            "side": "buy",
+            "sizingMode": "shares",
+            "sizeValue": 2,
+            "entryPriceUsd": 100,
+            "leverage": 1,
+            "currency": "USD",
+            "id": "position-1",
+            "createdAt": "2026-08-10T10:00:00.000Z",
+        }
+        payload = {
+            "portfolioId": "p1",
+            "positions": [position],
+            "baseCurrency": "USD",
+            "baseRevision": 0,
+            "idempotencyKey": "metadata-validation-1",
+        }
+
+        for field, invalid_value in (
+            ("id", 123),
+            ("createdAt", 123),
+            ("id", "x" * (backend.MAX_PORTFOLIO_POSITION_ID_LENGTH + 1)),
+            (
+                "createdAt",
+                "x" * (
+                    backend.MAX_PORTFOLIO_POSITION_CREATED_AT_LENGTH + 1
+                ),
+            ),
+        ):
+            response = self.client.post(
+                "/portfolio/save",
+                headers=self.headers,
+                json={
+                    **payload,
+                    "positions": [{**position, field: invalid_value}],
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn(field, response.get_json()["message"])
+
+        path = ("users", "user-a", "portfolio", "p1")
+        self.assertEqual(self.database.documents[path]["revision"], 0)
+        self.assertNotIn("lastMutationId", self.database.documents[path])
+
+    def test_current_prices_rejects_malformed_shapes_and_explains_batch_limit(self):
+        malformed = self.client.post(
+            "/portfolio/current-prices",
+            headers=self.headers,
+            data="[",
+            content_type="application/json",
+        )
+        self.assertEqual(malformed.status_code, 400)
+        self.assertEqual(malformed.get_json()["message"], "A JSON object is required.")
+
+        invalid_item = self.client.post(
+            "/portfolio/current-prices",
+            headers=self.headers,
+            json={"tickers": [True]},
+        )
+        self.assertEqual(invalid_item.status_code, 400)
+        self.assertIn("tickers[0]", invalid_item.get_json()["message"])
+
+        too_many = [f"TICKER{i:02d}" for i in range(51)]
+        with mock.patch.object(backend, "is_valid_ticker", return_value=True):
+            response = self.client.post(
+                "/portfolio/current-prices",
+                headers=self.headers,
+                json={"tickers": too_many},
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("quote batch", response.get_json()["message"])
+
+    def test_portfolio_position_numbers_reject_nonfinite_and_boolean_values(self):
+        base_position = {
+            "ticker": "AAPL",
+            "side": "buy",
+            "sizingMode": "shares",
+            "sizeValue": 1,
+            "entryPriceUsd": 10,
+            "leverage": 1,
+            "currency": "USD",
+        }
+        for field, value in (
+            ("entryPriceUsd", float("nan")),
+            ("sizeValue", True),
+            ("leverage", float("inf")),
+        ):
+            position = dict(base_position)
+            position[field] = value
+            cleaned, error = backend._sanitize_positions([position])
+            self.assertIsNone(cleaned)
+            self.assertIn(field, error)
+
 
 class PerformanceCalculationTests(unittest.TestCase):
     def test_return_drawdown_and_weekend_anchor(self):
@@ -809,6 +1253,104 @@ class PerformanceCalculationTests(unittest.TestCase):
         results = response.get_json()["results"]
         self.assertEqual(len(results), 2)
         self.assertEqual(results[1]["status"], "unavailable")
+
+    def test_partial_multi_symbol_yahoo_response_never_reuses_one_symbol(self):
+        index = pd.to_datetime(["2026-08-07"])
+        columns = pd.MultiIndex.from_tuples([("Close", "AAPL")])
+        downloaded = pd.DataFrame([[123.45]], index=index, columns=columns)
+        with mock.patch.object(backend.yf, "download", return_value=downloaded):
+            quotes = backend._fetch_current_prices(["AAPL", "MSFT"])
+        self.assertEqual(quotes["AAPL"], 123.45)
+        self.assertIsNone(quotes["MSFT"])
+
+
+class ServiceHardeningTests(unittest.TestCase):
+    def test_ticker_grammar_and_server_number_bounds(self):
+        self.assertEqual(backend._normalize_ticker(" brk=b "), "BRK=B")
+        self.assertIsNone(backend._normalize_ticker("AAPL\nX"))
+        self.assertEqual(backend._safe_float(0), 0.0)
+        self.assertIsNone(backend._safe_float(True))
+        self.assertIsNone(backend._safe_float(float("inf")))
+        self.assertIsNone(backend._safe_float(backend.MAX_SERVER_NUMBER_ABS * 2))
+
+    def test_firestore_negative_cache_distinguishes_missing_from_outage(self):
+        backend._financial_document_cache.clear()
+        backend._financial_document_inflight.clear()
+        with mock.patch.object(backend, "db", FakeDatabase()):
+            self.assertIsNone(
+                backend.get_financials_from_firestore("AAPL", "ttm_data")
+            )
+            self.assertFalse(
+                backend._financial_document_cache[("ttm_data", "AAPL")]["found"]
+            )
+        backend._financial_document_cache.clear()
+
+        class BrokenDatabase:
+            def collection(self, name):
+                raise RuntimeError("backend unavailable")
+
+        with mock.patch.object(backend, "db", BrokenDatabase()):
+            with self.assertRaises(backend.FirestoreUnavailableError):
+                backend.get_financials_from_firestore("AAPL", "ttm_data")
+        backend._financial_document_cache.clear()
+
+    def test_readiness_is_not_liveness(self):
+        with mock.patch.object(backend, "_ticker_cache_ready", False), \
+             mock.patch.object(backend, "_ticker_by_symbol", {}), \
+             mock.patch.object(backend, "db", None), \
+             mock.patch.object(backend.firebase_admin, "_apps", {}):
+            client = backend.app.test_client()
+            self.assertEqual(client.get("/live").status_code, 200)
+            self.assertEqual(client.get("/ready").status_code, 503)
+
+    def test_production_limiter_storage_failure_is_controlled_and_marks_unready(self):
+        client = backend.app.test_client()
+        headers = {"Authorization": "Bearer valid-token"}
+        with mock.patch.object(backend, "PRODUCTION_MODE", True), \
+             mock.patch.object(backend, "RATE_LIMIT_STORAGE_READY", True), \
+             mock.patch.object(backend.firebase_admin, "_apps", {"test": object()}), \
+             mock.patch.object(
+                 backend.auth,
+                 "verify_id_token",
+                 return_value={
+                     "uid": "user-a",
+                     "email": "verified@example.com",
+                     "email_verified": True,
+                 },
+             ):
+            with mock.patch.object(
+                backend.limiter._limiter,
+                "hit",
+                side_effect=backend.RateLimitStorageError(
+                    RuntimeError("redis connection dropped")
+                ),
+            ):
+                response = client.get("/watchlists", headers=headers)
+
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(
+                response.get_json()["code"], "RATE_LIMIT_STORAGE_UNAVAILABLE"
+            )
+            self.assertFalse(backend.RATE_LIMIT_STORAGE_READY)
+            self.assertFalse(backend._readiness_checks()["sharedRateLimit"])
+            readiness = client.get("/ready")
+            self.assertEqual(readiness.status_code, 503)
+            self.assertEqual(readiness.get_json()["status"], "not_ready")
+
+    def test_limiter_breach_remains_a_normal_429(self):
+        client = backend.app.test_client()
+        headers = {"Authorization": "Bearer valid-token"}
+        with mock.patch.object(backend, "PRODUCTION_MODE", False), \
+             mock.patch.object(backend, "RATE_LIMIT_STORAGE_READY", True), \
+             mock.patch.object(backend.firebase_admin, "_apps", {"test": object()}), \
+             mock.patch.object(
+                 backend.auth,
+                 "verify_id_token",
+                 return_value={"uid": "user-a", "email_verified": True},
+             ), \
+             mock.patch.object(backend.limiter._limiter, "hit", return_value=False):
+            response = client.get("/watchlists", headers=headers)
+        self.assertEqual(response.status_code, 429)
 
 
 if __name__ == "__main__":
