@@ -99,6 +99,47 @@ class EarningsCalendarHardeningTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.reason, "calendar_candidate_week_sparse")
 
+    def test_candidate_overlap_uses_identity_available_in_published_summaries(self):
+        coverage_start = dt.date(2026, 7, 27)
+        events = [_event(index) for index in range(25)]
+        previous_manifest = {
+            "coverageStart": coverage_start.isoformat(),
+            "coverageEnd": "2026-08-02",
+            "weeks": {
+                coverage_start.isoformat(): {
+                    "eventCount": len(events),
+                    "revision": "published",
+                },
+            },
+        }
+        previous_documents = {
+            coverage_start.isoformat(): {
+                "events": [
+                    {
+                        "eventId": event["eventId"],
+                        "symbol": event["symbol"],
+                        "reportDate": event["reportDate"],
+                    }
+                    for event in events
+                ],
+            },
+        }
+
+        result = earnings_calendar._validate_candidate_size(
+            events,
+            {
+                "rawEventCount": len(events),
+                "matchedEventCount": len(events),
+                "rejectedEventCount": 0,
+            },
+            previous_manifest,
+            coverage_start=coverage_start,
+            coverage_end=dt.date(2026, 8, 2),
+            previous_documents=previous_documents,
+        )
+
+        self.assertEqual(result["retainedWeeksChecked"], 1)
+
     def test_bootstrap_rejects_25_fully_mapped_events_for_requested_coverage(self):
         coverage_start = dt.date(2026, 7, 6)
         coverage_end = coverage_start + dt.timedelta(days=64)

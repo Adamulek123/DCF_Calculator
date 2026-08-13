@@ -1796,12 +1796,13 @@ def _release_lease(db, owner, deadline=None):
 
 
 def _candidate_event_identity(event):
-    issuer_or_symbol = event.get("issuerId") or event.get("symbol")
+    symbol = event.get("symbol")
     report_date = event.get("reportDate")
-    if issuer_or_symbol and report_date:
-        # Summary documents do not retain fiscal fields; issuer/date is the
-        # stable overlap identity shared by summaries and provider events.
-        return ("issuer-date", issuer_or_symbol, report_date)
+    if symbol and report_date:
+        # Published summary documents intentionally omit issuerId and fiscal
+        # fields, so symbol/date is the stable identity shared with provider
+        # candidates during overlap validation.
+        return ("symbol-date", symbol, report_date)
     event_id = event.get("eventId")
     if event_id:
         return ("event", event_id)
