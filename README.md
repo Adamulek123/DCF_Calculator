@@ -89,6 +89,20 @@ Render. If you develop on another Python/platform combination, use the exact
 direct pins in `requirements.txt` and regenerate/review the lock for that
 target before deploying.
 
+Regenerate the lock on Linux with CPython 3.12.10 and pip 24.2:
+
+```bash
+python -m pip install pip==24.2 pip-tools==7.5.2
+python -m piptools compile --allow-unsafe --generate-hashes \
+  --no-emit-index-url --no-emit-trusted-host --resolver=backtracking \
+  --strip-extras --upgrade --output-file requirements.lock requirements.txt
+```
+
+Keep `--only-binary=:all:` near the top of the generated lock, then validate
+it with `python scripts/verify_requirements_lock.py` and the hashed install
+command below. CI enforces that every exact direct pin is present at the same
+version in the reviewed lock.
+
 The checked-in `.python-version` pins CPython **3.12.10**. Configure the
 Render service environment with `PYTHON_VERSION=3.12.10` as well; the Render
 runtime, local interpreter, and CI must stay on that exact patch version when
