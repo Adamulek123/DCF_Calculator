@@ -1112,10 +1112,49 @@ class PublicationVerificationCliTests(unittest.TestCase):
             "EARNINGS_EXPECTED_REFRESH_SEQUENCE": "42",
         }, clear=False), mock.patch.object(
             publication_cli, "urlopen", return_value=health
-        ) as urlopen:
+        ) as urlopen, mock.patch.object(
+            publication_cli.time, "monotonic", side_effect=[0, 0, 180]
+        ):
             with self.assertRaisesRegex(RuntimeError, "checkedAt"):
                 publication_cli.main()
         self.assertEqual(urlopen.call_count, 1)
+
+    def test_retries_transient_timeout_and_stale_publication_for_three_minutes(self):
+        class Clock:
+            def __init__(self):
+                self.now = 0
+
+            def monotonic(self):
+                return self.now
+
+            def sleep(self, seconds):
+                self.now += seconds
+
+        expected = {
+            "status": "ok", "checkedAt": "2026-08-04T12:00:00Z",
+            "refreshSequence": 42,
+        }
+        stale = {
+            "status": "ok", "checkedAt": "2026-08-04T11:00:00Z",
+            "refreshSequence": 41,
+        }
+        clock = Clock()
+        with mock.patch.object(
+            publication_cli,
+            "urlopen",
+            side_effect=[TimeoutError("cold start"), self.Response(stale), self.Response(expected)],
+        ) as urlopen:
+            payload = publication_cli.verify_publication(
+                "https://example.test/health",
+                expected["checkedAt"],
+                str(expected["refreshSequence"]),
+                monotonic=clock.monotonic,
+                sleep=clock.sleep,
+            )
+
+        self.assertEqual(payload, expected)
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual(publication_cli.VERIFICATION_TIMEOUT_SECONDS, 180)
 
     def test_matching_publication_is_verified_without_external_monitor(self):
         payload = {

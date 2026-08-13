@@ -139,8 +139,11 @@ def _parse_iso_date(value, field):
 
 
 def _normalize_cik(value):
-    digits = re.sub(r"\D", "", str(value or ""))
-    if not digits or len(digits) > 10:
+    # Remove only the footnote/whitespace forms the table parser already knows
+    # about. Never manufacture a different identifier by deleting arbitrary
+    # punctuation from malformed source text.
+    digits = _clean_text(value)
+    if not re.fullmatch(r"\d{1,10}", digits):
         raise ConstituentScrapeError(f"Invalid CIK: {value!r}")
     return digits.zfill(10)
 

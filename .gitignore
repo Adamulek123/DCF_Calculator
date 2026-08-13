@@ -1,10 +1,31 @@
 # Python cache
 __pycache__/
 *.py[cod]
+.venv/
 .ticker-sector-checkpoint.json
 
 # Local development secrets (copy local_secrets.example.json)
 local_secrets.json
+local_secrets.*.json
+!local_secrets.example.json
+!local_secrets.*.example.json
+.env
+.env.*
+!.env.example
+!.env.*.example
+firebase-adminsdk*.json
+!firebase-adminsdk*.example.json
+service-account.json
+service-account-*.json
+*-service-account.json
+*-service-account-*.json
+!service-account*.example.json
+!*-service-account*.example.json
+private-key.json
+*-private-key.json
+*.private-key.json
+!*-private-key.example.json
+!*.private-key.example.json
 
 # Local agent instructions
 AGENTS.md
