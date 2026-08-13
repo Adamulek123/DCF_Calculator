@@ -185,7 +185,19 @@ starts all local services, waits for Flask, and calls the refresh endpoint.
 Later runs require only starting the batch file; a fresh cached calendar does
 not cause an extra Finnhub provider request.
 
-It also requires a reviewed `sp500_companies.json` snapshot with top-level `metadata` and `companies` fields. Each company supplies its CIK, display symbol, Finnhub alias, name, sector, and membership validity dates. Missing or invalid constituent data disables refreshes without preventing the Flask application or an existing cached calendar from being served. Never expose either secret to the browser or commit it to this repository.
+Calendar admission is not limited to the S&P 500. Every syntactically valid
+symbol in Finnhub's US earnings response is published. The existing
+`all_exchanges_clean.json` directory enriches names for the wider listing
+universe; a valid provider symbol that is not yet in that directory still gets
+a stable `finnhub-us:<symbol>` identity and remains visible.
+
+The reviewed `sp500_companies.json` snapshot remains as optional higher-quality
+identity and share-class metadata for those issuers. It supplies CIK grouping,
+historical membership, and reviewed calendar primaries used by the market-cap
+ordering subsystem, but it is no longer an earnings-calendar allowlist. Missing
+or invalid reviewed data still disables refreshes because existing ranked issuer
+state depends on it; it does not define the published earnings universe. Never
+expose either secret to the browser or commit it to this repository.
 
 Generate or review the snapshot independently from the earnings refresh:
 
@@ -196,8 +208,10 @@ python scripts/update_sp500_companies.py
 The updater reads Wikipedia through the Wikimedia API, validates the table shape and a plausible constituent count, merges the prior reviewed snapshot so removed securities retain a reviewed `validTo`, retains Finnhub's documented dot-form share-class symbol (for example `BRK.B`), accepts the hyphen variant as a compatibility alias, and records the source page revision and CC BY-SA attribution in the generated file. Review the diff before deployment; a failed update leaves the previous snapshot untouched.
 
 After deploying the schema, run the resumable seed from a controlled environment
-with the same production secrets. It checkpoints every 25 issuers and can be
-rerun safely:
+with the same production secrets. It checkpoints every 25 reviewed issuers and
+can be rerun safely. Wider-universe reports do not wait for market-cap enrichment;
+companies without a reviewed cap sort after ranked companies and then
+alphabetically:
 
 ```bash
 python scripts/seed_earnings_market_caps.py --max-profiles 500

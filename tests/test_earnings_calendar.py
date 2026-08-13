@@ -222,6 +222,69 @@ class EarningsCalendarBuildTests(unittest.TestCase):
 
 
 class ProviderBehaviorTests(unittest.TestCase):
+    def test_non_constituent_reports_are_kept_and_enriched_from_ticker_directory(self):
+        constituents = {
+            "byProviderSymbol": {},
+            "companiesByCik": {},
+            "tickerDirectory": {
+                "byProviderSymbol": {
+                    "PLTR": {"symbol": "PLTR", "name": "Palantir Technologies Inc."},
+                },
+            },
+        }
+        payload = {"earningsCalendar": [{
+            "symbol": "PLTR", "date": "2026-08-04", "year": 2026,
+            "quarter": 2, "hour": "amc", "epsEstimate": 0.15,
+        }]}
+
+        events, counts = earnings_calendar.normalize_provider_payload(
+            payload, constituents, dt.date(2026, 8, 3), dt.date(2026, 8, 9)
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["issuerId"], "finnhub-us:PLTR")
+        self.assertEqual(events[0]["companyName"], "Palantir Technologies Inc.")
+        self.assertEqual(counts["directoryEventCount"], 1)
+        self.assertEqual(counts["rejectedEventCount"], 0)
+
+    def test_valid_provider_symbol_is_kept_when_directory_has_no_match(self):
+        constituents = {
+            "byProviderSymbol": {},
+            "companiesByCik": {},
+            "tickerDirectory": {"byProviderSymbol": {}},
+        }
+        payload = {"earningsCalendar": [{
+            "symbol": "NEWCO", "date": "2026-08-04", "year": 2026,
+            "quarter": 2, "hour": "bmo",
+        }]}
+
+        events, counts = earnings_calendar.normalize_provider_payload(
+            payload, constituents, dt.date(2026, 8, 3), dt.date(2026, 8, 9)
+        )
+
+        self.assertEqual(events[0]["symbol"], "NEWCO")
+        self.assertEqual(events[0]["companyName"], "NEWCO")
+        self.assertEqual(counts["symbolOnlyEventCount"], 1)
+        self.assertEqual(counts["matchedEventCount"], 1)
+
+    def test_malformed_provider_symbol_is_rejected(self):
+        constituents = {
+            "byProviderSymbol": {},
+            "companiesByCik": {},
+            "tickerDirectory": {"byProviderSymbol": {}},
+        }
+        payload = {"earningsCalendar": [{
+            "symbol": "BAD SYMBOL", "date": "2026-08-04", "year": 2026,
+            "quarter": 2, "hour": "bmo",
+        }]}
+
+        events, counts = earnings_calendar.normalize_provider_payload(
+            payload, constituents, dt.date(2026, 8, 3), dt.date(2026, 8, 9)
+        )
+
+        self.assertEqual(events, [])
+        self.assertEqual(counts["rejectedEventCount"], 1)
+
     def test_share_class_duplicates_merge_estimates_and_use_primary_session(self):
         primary = {
             "cik": "0000000001", "symbol": "GOOGL", "providerSymbol": "GOOGL",
@@ -391,7 +454,7 @@ class ProviderBehaviorTests(unittest.TestCase):
                 }], {
                     "rawEventCount": 1,
                     "matchedEventCount": 1,
-                    "unknownSymbolCount": 0,
+                    "rejectedEventCount": 0,
                     "duplicateEventCount": 0,
                     "conflictingDuplicateCount": 0,
                 }),

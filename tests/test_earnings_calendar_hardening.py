@@ -77,7 +77,7 @@ class EarningsCalendarHardeningTests(unittest.TestCase):
             {
                 "rawEventCount": 250,
                 "matchedEventCount": 25,
-                "unknownSymbolCount": 225,
+                "rejectedEventCount": 225,
             },
             previous_manifest,
             coverage_start=dt.date(2026, 7, 27),
@@ -91,7 +91,7 @@ class EarningsCalendarHardeningTests(unittest.TestCase):
                 {
                     "rawEventCount": 250,
                     "matchedEventCount": 25,
-                    "unknownSymbolCount": 225,
+                    "rejectedEventCount": 225,
                 },
                 previous_manifest,
                 coverage_start=dt.date(2026, 7, 27),
@@ -109,7 +109,7 @@ class EarningsCalendarHardeningTests(unittest.TestCase):
                 {
                     "rawEventCount": 25,
                     "matchedEventCount": 25,
-                    "unknownSymbolCount": 0,
+                    "rejectedEventCount": 0,
                 },
                 {},
                 coverage_start=coverage_start,
@@ -134,7 +134,7 @@ class EarningsCalendarHardeningTests(unittest.TestCase):
             {
                 "rawEventCount": event_count,
                 "matchedEventCount": event_count,
-                "unknownSymbolCount": 0,
+                "rejectedEventCount": 0,
             },
             {},
             coverage_start=coverage_start,

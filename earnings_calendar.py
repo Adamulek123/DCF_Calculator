@@ -51,6 +51,7 @@ from earnings_market_caps import (
 
 FINNHUB_CALENDAR_URL = "https://finnhub.io/api/v1/calendar/earnings"
 CONSTITUENT_PATH = Path(__file__).with_name("sp500_companies.json")
+TICKER_DIRECTORY_PATH = Path(__file__).with_name("all_exchanges_clean.json")
 LOCAL_SECRETS_PATH = Path(__file__).with_name("local_secrets.json")
 META_COLLECTION = "earnings_calendar"
 META_DOCUMENT = "meta"
@@ -72,6 +73,7 @@ SESSION_ORDER = {
 }
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CIK_RE = re.compile(r"^\d{10}$")
+FINNHUB_US_SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9._:/-]{0,63}$")
 REFRESH_INTERVAL = dt.timedelta(hours=4)
 LEASE_DURATION = dt.timedelta(minutes=5)
 LEASE_RENEW_BEFORE = dt.timedelta(minutes=2)
@@ -98,7 +100,7 @@ MAX_FIRESTORE_DOCUMENT_BYTES = 900_000
 MAX_PUBLICATION_TRANSACTION_BYTES = 8_000_000
 SCHEDULED_REFRESH_TOLERANCE = dt.timedelta(minutes=30)
 MIN_PUBLICATION_SECONDS = 5.0
-INGESTION_VERSION = 5
+INGESTION_VERSION = 6
 # Keep a small baseline for ordinary candidate shape validation. A first
 # publication has no retained weeks against which to compare, so it also
 # needs an absolute, coverage-aware floor below.
@@ -108,14 +110,14 @@ MIN_BOOTSTRAP_EVENTS_PER_WEEK = 12
 # A default window varies from 59 to 65 days depending on the weekday. Cap
 # the coverage-scaled bootstrap requirement so a legitimate low-season first
 # publication cannot be blocked merely because the calendar spans ten partial
-# weeks. Ratio, unknown-symbol, exact-range, provider-consistency, and later
+# weeks. Ratio, rejected-symbol, exact-range, provider-consistency, and later
 # retained-week overlap checks remain independent fail-closed gates.
 MAX_BOOTSTRAP_MATCHED_EVENTS = 100
-# The provider calendar is broad, but a tiny mapped fraction is
-# indistinguishable from a broken symbol map. Enforce a materially stronger
-# floor and an independent unknown-symbol ceiling.
-MIN_MATCHED_RAW_RATIO = 0.10
-MAX_UNKNOWN_RAW_RATIO = 0.90
+# The provider calendar is broad, but a tiny normalized fraction is
+# indistinguishable from a malformed response. Directory misses are retained;
+# only syntactically unusable provider symbols count as rejected.
+MIN_NORMALIZED_RAW_RATIO = 0.10
+MAX_REJECTED_RAW_RATIO = 0.90
 MIN_OVERLAP_MATCH_RATIO = 0.40
 MAX_PUBLIC_READ_SECONDS = 8.0
 MAX_WEEK_DOCUMENT_READS = 16
@@ -530,6 +532,69 @@ def load_constituents(path=None):
         "companies": normalized_companies,
         "byProviderSymbol": by_provider_symbol,
         "companiesByCik": dict(companies_by_cik),
+        "tickerDirectory": load_ticker_directory(),
+    }
+
+
+def load_ticker_directory(path=None):
+    """Load broad listing metadata without turning it into an allowlist."""
+    source_path = Path(path or TICKER_DIRECTORY_PATH)
+    try:
+        raw = source_path.read_bytes()
+        payload = json.loads(raw.decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"byProviderSymbol": {}, "revision": None, "listingCount": 0}
+    if not isinstance(payload, list):
+        return {"byProviderSymbol": {}, "revision": None, "listingCount": 0}
+
+    exact = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "").strip().upper()
+        name = str(item.get("name") or "").strip()
+        if not FINNHUB_US_SYMBOL_RE.fullmatch(symbol) or not name or symbol in exact:
+            continue
+        exact[symbol] = {"symbol": symbol, "name": name}
+
+    by_provider_symbol = dict(exact)
+    for symbol, item in exact.items():
+        aliases = {symbol}
+        if "." in symbol:
+            aliases.add(symbol.replace(".", "-"))
+        if "-" in symbol:
+            aliases.add(symbol.replace("-", "."))
+        for alias in aliases:
+            by_provider_symbol.setdefault(alias, item)
+    return {
+        "byProviderSymbol": by_provider_symbol,
+        "revision": f"sha256:{hashlib.sha256(raw).hexdigest()}",
+        "listingCount": len(exact),
+    }
+
+
+def _provider_backed_issuer(provider_symbol, ticker_directory):
+    """Create a stable issuer for any syntactically valid Finnhub US symbol."""
+    if not FINNHUB_US_SYMBOL_RE.fullmatch(provider_symbol):
+        return None
+    directory = ticker_directory if isinstance(ticker_directory, dict) else {}
+    listings = directory.get("byProviderSymbol")
+    listing = listings.get(provider_symbol) if isinstance(listings, dict) else None
+    display_symbol = str((listing or {}).get("symbol") or provider_symbol).strip().upper()
+    company_name = str((listing or {}).get("name") or display_symbol).strip()
+    aliases = {provider_symbol, display_symbol}
+    if "." in display_symbol:
+        aliases.add(display_symbol.replace(".", "-"))
+    if "-" in display_symbol:
+        aliases.add(display_symbol.replace("-", "."))
+    return {
+        "issuerId": f"finnhub-us:{display_symbol}",
+        "symbol": display_symbol,
+        "companyName": company_name,
+        "primaryProviderSymbol": provider_symbol,
+        "providerSymbols": sorted(aliases),
+        "constituentSymbols": [display_symbol],
+        "directoryMatched": listing is not None,
     }
 
 
@@ -1297,8 +1362,12 @@ def normalize_provider_payload(payload, constituents, coverage_start, coverage_e
     if not isinstance(raw_events, list):
         raise ProviderValidationError("Finnhub earningsCalendar must be an array.")
     provider_map = constituents["byProviderSymbol"]
+    ticker_directory = constituents.get("tickerDirectory") or {}
     normalized_by_key = {}
-    unknown_symbol_count = 0
+    reviewed_event_count = 0
+    directory_event_count = 0
+    symbol_only_event_count = 0
+    rejected_event_count = 0
     duplicate_event_count = 0
     conflicting_duplicate_count = 0
 
@@ -1314,17 +1383,27 @@ def normalize_provider_payload(payload, constituents, coverage_start, coverage_e
         if report_date < coverage_start or report_date > coverage_end:
             raise ProviderValidationError("Finnhub returned an event outside the requested range.")
         company = provider_map.get(provider_symbol)
-        if not company:
-            unknown_symbol_count += 1
-            continue
-        if report_date < company["validFrom"] or (company["validTo"] and report_date > company["validTo"]):
-            continue
-        try:
-            issuer = issuer_for_event(constituents["companiesByCik"], company, report_date)
-        except MarketCapValidationError as exc:
-            raise ConstituentValidationError(str(exc)) from exc
+        issuer = None
+        if company and not (
+            report_date < company["validFrom"]
+            or (company["validTo"] and report_date > company["validTo"])
+        ):
+            try:
+                issuer = issuer_for_event(constituents["companiesByCik"], company, report_date)
+            except MarketCapValidationError as exc:
+                raise ConstituentValidationError(str(exc)) from exc
+        if issuer:
+            reviewed_event_count += 1
+        else:
+            issuer = _provider_backed_issuer(provider_symbol, ticker_directory)
         if not issuer:
+            rejected_event_count += 1
             continue
+        if issuer["issuerId"].startswith("finnhub-us:"):
+            if issuer.get("directoryMatched"):
+                directory_event_count += 1
+            else:
+                symbol_only_event_count += 1
         fiscal_year = _safe_int(item.get("year"), 1900, 2200)
         fiscal_quarter = _safe_int(item.get("quarter"), 1, 4)
         event = {
@@ -1380,7 +1459,10 @@ def normalize_provider_payload(payload, constituents, coverage_start, coverage_e
     return events, {
         "rawEventCount": len(raw_events),
         "matchedEventCount": len(events),
-        "unknownSymbolCount": unknown_symbol_count,
+        "reviewedEventCount": reviewed_event_count,
+        "directoryEventCount": directory_event_count,
+        "symbolOnlyEventCount": symbol_only_event_count,
+        "rejectedEventCount": rejected_event_count,
         "duplicateEventCount": duplicate_event_count,
         "conflictingDuplicateCount": conflicting_duplicate_count,
     }
@@ -1763,10 +1845,11 @@ def _validate_candidate_size(
     coverage_end=None,
     previous_documents=None,
 ):
-    """Fail closed on sparse/mis-mapped provider candidates.
+    """Fail closed on sparse or malformed provider candidates.
 
     The old aggregate comparison included weeks that were intentionally
-    falling out of the rolling window and did not inspect unknown symbols.
+    falling out of the rolling window. Directory misses are accepted because
+    the provider symbol itself is a valid fallback identity.
     This validator compares only retained overlap, checks each retained week,
     and optionally compares event identities from the stored documents. A
     validation error is the quarantine boundary: refresh callers must not
@@ -1780,11 +1863,11 @@ def _validate_candidate_size(
 
     raw_value = provider_counts.get("rawEventCount")
     matched_value = provider_counts.get("matchedEventCount")
-    unknown_value = provider_counts.get("unknownSymbolCount")
+    rejected_value = provider_counts.get("rejectedEventCount")
     try:
         raw_count = int(raw_value)
         declared_matched_count = int(matched_value)
-        unknown_count = int(unknown_value)
+        rejected_count = int(rejected_value)
     except (TypeError, ValueError, OverflowError):
         raise ProviderValidationError(
             "Finnhub provider counts are malformed.",
@@ -1795,20 +1878,20 @@ def _validate_candidate_size(
         raw_count <= 0
         or declared_matched_count != matched_count
         or matched_count < MIN_INITIAL_MATCHED_EVENTS
-        or unknown_count < 0
+        or rejected_count < 0
         or matched_count < 0
-        or matched_count + unknown_count > raw_count
+        or matched_count + rejected_count > raw_count
     ):
         raise ProviderValidationError(
             "Finnhub returned an implausibly small or malformed matched calendar.",
             reason="calendar_candidate_counts_invalid",
         )
-    matched_ratio = matched_count / raw_count
-    unknown_ratio = unknown_count / raw_count
-    if matched_ratio < MIN_MATCHED_RAW_RATIO or unknown_ratio > MAX_UNKNOWN_RAW_RATIO:
+    normalized_ratio = matched_count / raw_count
+    rejected_ratio = rejected_count / raw_count
+    if normalized_ratio < MIN_NORMALIZED_RAW_RATIO or rejected_ratio > MAX_REJECTED_RAW_RATIO:
         raise ProviderValidationError(
-            "Finnhub returned an implausibly low S&P 500 match ratio.",
-            reason="calendar_candidate_symbol_mapping_sparse",
+            "Finnhub returned an implausibly low normalized calendar ratio.",
+            reason="calendar_candidate_normalization_sparse",
         )
 
     candidate_by_week = defaultdict(list)
@@ -1917,9 +2000,9 @@ def _validate_candidate_size(
     return {
         "rawEventCount": raw_count,
         "matchedEventCount": matched_count,
-        "unknownSymbolCount": unknown_count,
-        "matchedRatio": matched_ratio,
-        "unknownRatio": unknown_ratio,
+        "rejectedEventCount": rejected_count,
+        "normalizedRatio": normalized_ratio,
+        "rejectedRatio": rejected_ratio,
         "retainedWeeksChecked": len(retained_week_keys),
     }
 
@@ -2403,6 +2486,7 @@ def refresh_earnings_calendar(
             "refreshSequence": max(0, int(previous_manifest.get("refreshSequence") or 0)) + 1,
             "datasetRevision": built["datasetRevision"],
             "provider": "finnhub",
+            "universe": "finnhub-us",
             "checkedAt": _iso_utc(now),
             "changedAt": manifest_changed_at,
             "refreshAfter": _iso_utc(now + REFRESH_INTERVAL),
@@ -2414,6 +2498,10 @@ def refresh_earnings_calendar(
             ).isoformat(),
             "effectiveFutureCoverageDays": config["futureCoverageDays"],
             "constituentVersion": constituents["metadata"]["version"],
+            "tickerDirectoryRevision": (constituents.get("tickerDirectory") or {}).get("revision"),
+            "tickerDirectoryListingCount": max(
+                0, int((constituents.get("tickerDirectory") or {}).get("listingCount") or 0)
+            ),
             "marketCapContentRevision": candidate_snapshot["contentRevision"],
             "weeks": built["manifestWeeks"],
         }
@@ -2490,6 +2578,7 @@ def _public_manifest(manifest):
         "refreshSequence": max(0, int(manifest.get("refreshSequence") or 0)),
         "datasetRevision": manifest.get("datasetRevision"),
         "provider": manifest.get("provider"),
+        "universe": manifest.get("universe"),
         "checkedAt": _iso_utc(manifest.get("checkedAt")),
         "changedAt": _iso_utc(manifest.get("changedAt")),
         "refreshAfter": _iso_utc(manifest.get("refreshAfter")),
@@ -2499,6 +2588,10 @@ def _public_manifest(manifest):
         "providerSupportedCoverageEnd": manifest.get("providerSupportedCoverageEnd"),
         "effectiveFutureCoverageDays": max(0, int(manifest.get("effectiveFutureCoverageDays") or 0)),
         "constituentVersion": manifest.get("constituentVersion"),
+        "tickerDirectoryRevision": manifest.get("tickerDirectoryRevision"),
+        "tickerDirectoryListingCount": max(
+            0, int(manifest.get("tickerDirectoryListingCount") or 0)
+        ),
         "weeks": {
             key: {
                 "revision": value.get("revision"),
