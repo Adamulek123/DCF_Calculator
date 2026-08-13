@@ -21,7 +21,7 @@ jobs:
           python-version: "3.12.10"
       - name: Compile hashed lock
         run: |
-          python -m pip install --disable-pip-version-check pip-tools==7.5.2
+          python -m pip install --disable-pip-version-check pip==24.2 pip-tools==7.5.2
           python -m piptools compile \
             --allow-unsafe \
             --generate-hashes \
