@@ -1,0 +1,56 @@
+name: Temporary compile dependency lock
+
+on:
+  push:
+    branches: [agent/refresh-python-dependencies]
+
+permissions:
+  contents: write
+
+jobs:
+  compile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/refresh-python-dependencies
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.10"
+      - name: Compile hashed lock
+        run: |
+          python -m pip install --disable-pip-version-check pip-tools==7.5.2
+          python -m piptools compile \
+            --allow-unsafe \
+            --generate-hashes \
+            --no-emit-index-url \
+            --no-emit-trusted-host \
+            --resolver=backtracking \
+            --strip-extras \
+            --upgrade \
+            --output-file requirements.lock \
+            requirements.txt
+          python - <<'PY'
+          from pathlib import Path
+
+          lock = Path("requirements.lock")
+          body = lock.read_text(encoding="utf-8")
+          marker = "--only-binary=:all:\n\n"
+          if marker not in body:
+              lines = body.splitlines(keepends=True)
+              insert_at = next((i for i, line in enumerate(lines) if not line.startswith("#")), len(lines))
+              lines.insert(insert_at, marker)
+              lock.write_text("".join(lines), encoding="utf-8")
+          PY
+          python -m pip install --only-binary=:all: --require-hashes -r requirements.lock
+          python -m pip check
+      - name: Commit generated lock
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add requirements.lock
+          git diff --cached --quiet && exit 0
+          git commit -m "Compile refreshed dependency lock"
+          git push origin HEAD:agent/refresh-python-dependencies
