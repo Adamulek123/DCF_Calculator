@@ -99,6 +99,130 @@ class EarningsCalendarHardeningTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.reason, "calendar_candidate_week_sparse")
 
+    def test_candidate_validation_skips_week_entirely_beyond_provider_history(self):
+        # On 2026-08-23 the servable horizon starts 2026-07-26, so every
+        # weekday of the 2026-07-13 week is unfetchable.
+        events = [_event(index, "2026-08-03") for index in range(30)]
+        counts = {
+            "rawEventCount": 30,
+            "matchedEventCount": 30,
+            "rejectedEventCount": 0,
+        }
+        previous_manifest = {
+            "coverageStart": "2026-07-13",
+            "coverageEnd": "2026-08-23",
+            "weeks": {
+                "2026-07-13": {"eventCount": 400, "revision": "published"},
+            },
+        }
+        with self.assertRaises(earnings_calendar.ProviderValidationError) as raised:
+            earnings_calendar._validate_candidate_size(
+                events,
+                counts,
+                previous_manifest,
+                coverage_start=dt.date(2026, 7, 13),
+                coverage_end=dt.date(2026, 8, 23),
+            )
+        self.assertEqual(raised.exception.reason, "calendar_candidate_week_sparse")
+
+        result = earnings_calendar._validate_candidate_size(
+            events,
+            counts,
+            previous_manifest,
+            coverage_start=dt.date(2026, 7, 13),
+            coverage_end=dt.date(2026, 8, 23),
+            market_today=dt.date(2026, 8, 23),
+        )
+        self.assertEqual(result["retainedWeeksChecked"], 0)
+        self.assertEqual(result["retainedWeeksBeyondProviderHistory"], 1)
+
+    def test_candidate_validation_scales_partially_fetchable_week_by_weekdays(self):
+        # On 2026-08-20 the servable horizon starts 2026-07-23, leaving only
+        # Thursday and Friday within the 2026-07-20 week fetchable.
+        previous_manifest = {
+            "coverageStart": "2026-07-20",
+            "coverageEnd": "2026-08-23",
+            "weeks": {
+                "2026-07-20": {"eventCount": 50, "revision": "published"},
+            },
+        }
+        previous_documents = {
+            "2026-07-20": {
+                "events": [
+                    {
+                        "eventId": f"stale-{index}",
+                        "symbol": f"OLD{index}",
+                        "reportDate": f"2026-07-2{index}",
+                    }
+                    for index in range(3)
+                ]
+                + [
+                    {
+                        "eventId": "fresh-0",
+                        "symbol": "FRESH0",
+                        "reportDate": "2026-07-24",
+                    }
+                ],
+            },
+        }
+
+        def candidate(fresh_count):
+            fresh = [
+                {
+                    "eventId": f"fresh-{index}",
+                    "issuerId": f"{90 + index:010d}",
+                    "symbol": "FRESH0" if index == 0 else f"NEW{index}",
+                    "reportDate": "2026-07-24" if index == 0 else "2026-07-23",
+                }
+                for index in range(fresh_count)
+            ]
+            return [_event(index, "2026-08-05") for index in range(30)] + fresh
+
+        def validate(fresh_count):
+            total = 30 + fresh_count
+            return earnings_calendar._validate_candidate_size(
+                candidate(fresh_count),
+                {
+                    "rawEventCount": total,
+                    "matchedEventCount": total,
+                    "rejectedEventCount": 0,
+                },
+                previous_manifest,
+                coverage_start=dt.date(2026, 7, 20),
+                coverage_end=dt.date(2026, 8, 23),
+                previous_documents=previous_documents,
+                market_today=dt.date(2026, 8, 20),
+            )
+
+        # minimum_count = ceil(50 * 0.40 * 2/5) == 8. The passing run also
+        # proves the horizon exclusion is applied to the identity overlap:
+        # without it, prior_ids would include the three stale events and
+        # overlap would drop to 1/4 < MIN_OVERLAP_MATCH_RATIO.
+        result = validate(8)
+        self.assertEqual(result["retainedWeeksChecked"], 1)
+        self.assertEqual(result["retainedWeeksBeyondProviderHistory"], 0)
+
+        with self.assertRaises(earnings_calendar.ProviderValidationError) as raised:
+            validate(7)
+        self.assertEqual(raised.exception.reason, "calendar_candidate_week_sparse")
+
+    def test_provider_horizon_helpers_normalize_datetime_and_malformed_input(self):
+        reference_date = dt.date(2026, 8, 23)
+        reference_datetime = dt.datetime(2026, 8, 23, 5, 30)
+        self.assertEqual(
+            earnings_calendar._provider_servable_from(reference_datetime),
+            earnings_calendar._provider_servable_from(reference_date),
+        )
+        self.assertEqual(
+            earnings_calendar._week_fetchable_days("2026-07-20", reference_datetime),
+            earnings_calendar._week_fetchable_days("2026-07-20", reference_date),
+        )
+        self.assertIsNone(
+            earnings_calendar._week_fetchable_days("not-a-date", reference_date)
+        )
+        self.assertIsNone(earnings_calendar._provider_servable_from(None))
+        self.assertIsNone(earnings_calendar._provider_servable_from("2026-08-23"))
+
     def test_candidate_overlap_uses_identity_available_in_published_summaries(self):
         coverage_start = dt.date(2026, 7, 27)
         events = [_event(index) for index in range(25)]
