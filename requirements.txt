@@ -2,7 +2,7 @@
 # small, human-reviewed direct-dependency input; CI installs requirements.lock.
 Flask==3.1.3
 Flask-Compress==1.24
-yfinance==1.5.2
+yfinance==1.6.0
 Flask-Cors==6.0.5
 Brotli==1.1.0
 firebase-admin==7.1.0
