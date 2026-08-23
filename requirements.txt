@@ -6,7 +6,7 @@ yfinance==1.5.2
 Flask-Cors==6.0.5
 Brotli==1.1.0
 firebase-admin==7.1.0
-google-cloud-firestore==2.21.0
+google-cloud-firestore==2.28.1
 requests==2.34.2
 gunicorn==26.0.0
 flask-limiter==3.12
