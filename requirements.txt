@@ -9,6 +9,6 @@ firebase-admin==7.1.0
 google-cloud-firestore==2.21.0
 requests==2.34.2
 gunicorn==26.0.0
-flask-limiter==3.12
+flask-limiter==4.1.1
 redis==8.1.0
 pandas==3.0.5
