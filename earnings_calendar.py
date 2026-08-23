@@ -119,6 +119,17 @@ MAX_BOOTSTRAP_MATCHED_EVENTS = 100
 MIN_NORMALIZED_RAW_RATIO = 0.10
 MAX_REJECTED_RAW_RATIO = 0.90
 MIN_OVERLAP_MATCH_RATIO = 0.40
+# Finnhub serves roughly 30 days of earnings-calendar history (verified on
+# 2026-08-23: single-day queries older than 30 days return zero rows while
+# 30 days still returns full coverage). Retained weeks older than that
+# horizon can never be re-verified by a fresh candidate, so per-week
+# sparsity checks must not fail closed on them.
+PROVIDER_HISTORY_DAYS = 30
+# Validation assumes slightly less provider history than observed so that a
+# timezone or day-boundary mismatch between this scheduler and the provider
+# errs toward skipping a check instead of demanding unfetchable rows.
+PROVIDER_HISTORY_MARGIN_DAYS = 2
+PROVIDER_SERVABLE_HORIZON_DAYS = PROVIDER_HISTORY_DAYS - PROVIDER_HISTORY_MARGIN_DAYS
 MAX_PUBLIC_READ_SECONDS = 8.0
 MAX_WEEK_DOCUMENT_READS = 16
 
@@ -1838,6 +1849,60 @@ def _bootstrap_matched_event_floor(coverage_start=None, coverage_end=None):
     )
 
 
+def _calendar_date_only(value):
+    """Normalize a date or datetime to a plain date, else None."""
+    if isinstance(value, dt.datetime):
+        return value.date()
+    return value if isinstance(value, dt.date) else None
+
+
+def _provider_servable_from(market_today):
+    """Return the oldest report date the provider can still serve, or None.
+
+    Finnhub serves roughly PROVIDER_HISTORY_DAYS days of history. The
+    classification horizon is kept PROVIDER_HISTORY_MARGIN_DAYS below the
+    observed value so timezone or anchor drift between this scheduler and
+    the provider cannot make validation expect rows the provider already
+    stopped serving (fail-safe direction: fewer days assumed fetchable).
+    """
+    market_today = _calendar_date_only(market_today)
+    if market_today is None:
+        return None
+    return market_today - dt.timedelta(days=PROVIDER_SERVABLE_HORIZON_DAYS)
+
+
+def _week_fetchable_days(week_key, market_today):
+    """Return ``(fetchable_weekdays, total_weekdays)`` for a retained week.
+
+    The provider calendar only reports roughly PROVIDER_HISTORY_DAYS days of
+    history, and earnings events effectively occur on weekdays. Days older
+    than that horizon return zero rows no matter what was previously
+    published, so validation must scale expectations to the part of the week
+    the provider can still serve. Returns ``None`` when the horizon cannot be
+    applied (missing inputs or malformed week key).
+    """
+    parsed_week_start = None
+    try:
+        parsed_week_start = _parse_date(week_key, "weekKey")
+    except ValueError:
+        return None
+    servable_from = _provider_servable_from(market_today)
+    if servable_from is None:
+        return None
+    fetchable = 0
+    total = 0
+    for offset in range(7):
+        day = parsed_week_start + dt.timedelta(days=offset)
+        if day.weekday() >= 5:
+            continue
+        total += 1
+        if day >= servable_from:
+            fetchable += 1
+    if total == 0:
+        return None
+    return fetchable, total
+
+
 def _validate_candidate_size(
     events,
     provider_counts,
@@ -1845,6 +1910,7 @@ def _validate_candidate_size(
     coverage_start=None,
     coverage_end=None,
     previous_documents=None,
+    market_today=None,
 ):
     """Fail closed on sparse or malformed provider candidates.
 
@@ -1852,9 +1918,11 @@ def _validate_candidate_size(
     falling out of the rolling window. Directory misses are accepted because
     the provider symbol itself is a valid fallback identity.
     This validator compares only retained overlap, checks each retained week,
-    and optionally compares event identities from the stored documents. A
-    validation error is the quarantine boundary: refresh callers must not
-    publish the candidate or advance the manifest.
+    and optionally compares event identities from the stored documents. Weeks
+    (or parts of weeks) older than the provider history horizon are scaled or
+    skipped because a fresh candidate can never re-serve them. A validation
+    error is the quarantine boundary: refresh callers must not publish the
+    candidate or advance the manifest.
     """
     provider_counts = provider_counts if isinstance(provider_counts, dict) else {}
     previous_manifest = previous_manifest if isinstance(previous_manifest, dict) else {}
@@ -1942,6 +2010,8 @@ def _validate_candidate_size(
             )
 
     previous_documents = previous_documents if isinstance(previous_documents, dict) else {}
+    servable_from = _provider_servable_from(market_today)
+    skipped_week_keys = []
     for week_key in sorted(retained_week_keys):
         entry = previous_weeks.get(week_key)
         if not isinstance(entry, dict):
@@ -1962,8 +2032,16 @@ def _validate_candidate_size(
                 reason="calendar_candidate_overlap_invalid",
             )
         candidate_events = candidate_by_week.get(week_key, [])
+        fetchable = _week_fetchable_days(week_key, market_today)
+        if fetchable is not None and fetchable[0] <= 0:
+            # The whole week is beyond the provider history horizon, so a
+            # fresh candidate can never contain its events. Skipping keeps
+            # the fail-closed boundary for weeks the provider still serves.
+            skipped_week_keys.append(week_key)
+            continue
+        scale = 1.0 if fetchable is None else fetchable[0] / fetchable[1]
         minimum_count = (
-            max(1, math.ceil(previous_count * MIN_OVERLAP_MATCH_RATIO))
+            max(1, math.ceil(previous_count * MIN_OVERLAP_MATCH_RATIO * scale))
             if previous_count > 0
             else 0
         )
@@ -1976,14 +2054,25 @@ def _validate_candidate_size(
         prior_document = previous_documents.get(week_key)
         prior_events = prior_document.get("events") if isinstance(prior_document, dict) else None
         if isinstance(prior_events, list) and prior_events and previous_count:
-            prior_ids = {
-                identity
-                for item in prior_events
-                if isinstance(item, dict)
-                and (item.get("eventId") or item.get("issuerId") or item.get("symbol"))
-                for identity in [_candidate_event_identity(item)]
-                if identity is not None
-            }
+            prior_ids = set()
+            for item in prior_events:
+                if not isinstance(item, dict):
+                    continue
+                if not (item.get("eventId") or item.get("issuerId") or item.get("symbol")):
+                    continue
+                identity = _candidate_event_identity(item)
+                if identity is None:
+                    continue
+                if servable_from is not None:
+                    try:
+                        prior_date = _parse_date(item.get("reportDate"), "prior.reportDate")
+                    except ValueError:
+                        prior_date = None
+                    if prior_date is not None and prior_date < servable_from:
+                        # Events beyond the provider horizon cannot appear in
+                        # a fresh candidate; exclude them from the overlap.
+                        continue
+                prior_ids.add(identity)
             candidate_ids = {
                 identity
                 for item in candidate_events
@@ -2004,7 +2093,8 @@ def _validate_candidate_size(
         "rejectedEventCount": rejected_count,
         "normalizedRatio": normalized_ratio,
         "rejectedRatio": rejected_ratio,
-        "retainedWeeksChecked": len(retained_week_keys),
+        "retainedWeeksChecked": len(retained_week_keys) - len(skipped_week_keys),
+        "retainedWeeksBeyondProviderHistory": len(skipped_week_keys),
     }
 
 
@@ -2343,14 +2433,16 @@ def refresh_earnings_calendar(
             coverage_start,
             coverage_end,
         )
-        _validate_candidate_size(
+        validation_summary = _validate_candidate_size(
             events,
             provider_counts,
             previous_manifest,
             coverage_start=coverage_start,
             coverage_end=coverage_end,
             previous_documents=previous_documents,
+            market_today=market_today,
         )
+        _log("earnings_candidate_validation", **validation_summary)
 
         prior_symbols = _symbols_from_retained_weeks(
             previous_documents, retained_week_keys
